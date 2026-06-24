@@ -365,6 +365,15 @@ func _on_ros_joints(joints: Dictionary) -> void:
 		robot.set_joint_angle(jname, joints[jname])
 
 
+func _on_ros_health(health: Dictionary) -> void:
+	# Status servo dari robot -> kedipkan link yang bermasalah + tandai di panel
+	if robot:
+		for jname in health:
+			robot.set_servo_health(jname, health[jname])
+	if sensor_panel and sensor_panel.has_method("set_servo_health"):
+		sensor_panel.set_servo_health(health)
+
+
 func _make_status_dot() -> Control:
 	var dot := Panel.new()
 	dot.custom_minimum_size = Vector2(12, 12)
@@ -468,6 +477,7 @@ func _build_3d_scene() -> void:
 	add_child(ros_bridge)
 	ros_bridge.status_changed.connect(_on_ros_status)
 	ros_bridge.joints_received.connect(_on_ros_joints)
+	ros_bridge.health_received.connect(_on_ros_health)
 
 
 func _add_dir_light(rot_deg: Vector3, energy: float, color: Color, shadow := false) -> void:

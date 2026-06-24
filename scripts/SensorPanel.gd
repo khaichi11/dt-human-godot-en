@@ -73,6 +73,7 @@ var joint_angle_lbls := {}  # joint_name => Label
 var joint_temp_lbls := {}   # joint_name => Label (kosong jika tak ditampilkan)
 var joint_sliders := {}     # joint_name => HSlider
 var joint_name_btns := {}   # joint_name => Button
+var joint_health_dots := {} # joint_name => Panel (indikator health)
 
 # Gerakan/pose (diekstrak dari data ROBOTIS) — nama => {hold, steps:[...]}
 var motions_data := {}
@@ -569,6 +570,14 @@ func _build_joints_section() -> PanelContainer:
 		row.add_theme_constant_override("separation", 6)
 		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
+		# Titik health servo (hijau=ok, kuning=warn, merah=fault)
+		var dot := Panel.new()
+		dot.custom_minimum_size = Vector2(9, 9)
+		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		_set_dot_color(dot, Color(0.35, 0.78, 0.55))
+		joint_health_dots[jname] = dot
+		row.add_child(dot)
+
 		# Nama + ID servo (tombol untuk memilih joint)
 		var sid := i + 1                       # ID Dynamixel = urutan 1..20
 		var name_btn := Button.new()
@@ -657,6 +666,27 @@ func set_editable(editable: bool) -> void:
 		motion_option.disabled = not editable
 
 
+func _set_dot_color(dot: Panel, c: Color) -> void:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = c
+	sb.corner_radius_top_left = 5
+	sb.corner_radius_top_right = 5
+	sb.corner_radius_bottom_left = 5
+	sb.corner_radius_bottom_right = 5
+	dot.add_theme_stylebox_override("panel", sb)
+
+
+# Status health servo dari robot (nama_joint -> "ok"|"warn"|"fault")
+func set_servo_health(health: Dictionary) -> void:
+	for jname in health:
+		if not joint_health_dots.has(jname):
+			continue
+		match String(health[jname]):
+			"fault": _set_dot_color(joint_health_dots[jname], Color(0.93, 0.20, 0.20))
+			"warn":  _set_dot_color(joint_health_dots[jname], Color(0.97, 0.75, 0.20))
+			_:       _set_dot_color(joint_health_dots[jname], Color(0.35, 0.78, 0.55))
+
+
 func _on_joint_clicked(jname: String) -> void:
 	if _manip_ref and _manip_ref.has_method("select_joint"):
 		_manip_ref.select_joint(jname)
@@ -715,9 +745,32 @@ func _build_system_section() -> PanelContainer:
 	fps_lbl     = _add_kv(grid, "FPS", "60")
 	latency_lbl = _add_kv(grid, "Latency", "8.2 ms")
 	uptime_lbl  = _add_kv(grid, "Uptime", "00:00:00")
-	_add_kv(grid, "ROS Topic", "/op3/all_joints")
+	_add_kv(grid, "Health topic", "/dt/servo_health")
+
+	var st := Button.new()
+	st.text = "Self-Test Servo"
+	st.focus_mode = Control.FOCUS_NONE
+	st.tooltip_text = "Pratinjau indikator health (simulasi: 1 fault, 1 warn)"
+	st.pressed.connect(_on_self_test)
+	content.add_child(st)
 
 	return content.get_meta("card_panel")
+
+
+func _on_self_test() -> void:
+	# Pratinjau visual health saat belum ada robot. Tandai 1 fault + 1 warn,
+	# lalu kembali normal setelah 5 detik.
+	var demo := {"r_knee": "fault", "l_sho_roll": "warn"}
+	_apply_health_demo(demo)
+	await get_tree().create_timer(5.0).timeout
+	_apply_health_demo({"r_knee": "ok", "l_sho_roll": "ok"})
+
+
+func _apply_health_demo(h: Dictionary) -> void:
+	set_servo_health(h)
+	if _robot_ref and _robot_ref.has_method("set_servo_health"):
+		for jn in h:
+			_robot_ref.set_servo_health(jn, h[jn])
 
 
 # ============================================================================

@@ -17,9 +17,14 @@ extends Node
 
 signal status_changed(state: String)          # "connecting" | "open" | "closed"
 signal joints_received(joints: Dictionary)     # nama_joint -> radian
+signal health_received(health: Dictionary)     # nama_joint -> "ok"|"warn"|"fault"
 
 const SUB_TOPIC := "/robotis/present_joint_states"
 const SUB_TYPE  := "sensor_msgs/msg/JointState"
+# Topik diagnostik servo (robot-side: baca hardware_error_status / suhu / load
+# dari Dynamixel Protocol 2.0 lalu publish). msg: {name:[...], level:[0|1|2]}.
+const HEALTH_TOPIC := "/dt/servo_health"
+const HEALTH_TYPE  := "std_msgs/msg/String"   # JSON di field data, atau name/level
 const CMD_TOPIC := "/robotis/set_joint_states"
 const CMD_TYPE  := "sensor_msgs/msg/JointState"
 const RECONNECT_SEC := 3.0
@@ -63,6 +68,7 @@ func _process(delta: float) -> void:
 		WebSocketPeer.STATE_OPEN:
 			if not _subscribed:
 				_send({"op": "subscribe", "topic": SUB_TOPIC, "type": SUB_TYPE})
+				_send({"op": "subscribe", "topic": HEALTH_TOPIC, "type": HEALTH_TYPE})
 				_subscribed = true
 				emit_signal("status_changed", "open")
 			while _ws.get_available_packet_count() > 0:
@@ -89,7 +95,13 @@ func _handle_message(text: String) -> void:
 	var data = JSON.parse_string(text)
 	if typeof(data) != TYPE_DICTIONARY:
 		return
-	if data.get("op", "") != "publish" or data.get("topic", "") != SUB_TOPIC:
+	if data.get("op", "") != "publish":
+		return
+	var topic: String = data.get("topic", "")
+	if topic == HEALTH_TOPIC:
+		_handle_health(data.get("msg", {}))
+		return
+	if topic != SUB_TOPIC:
 		return
 	var msg: Dictionary = data.get("msg", {})
 	var names: Array = msg.get("name", [])
@@ -99,6 +111,22 @@ func _handle_message(text: String) -> void:
 		out[String(names[i])] = float(pos[i])
 	if not out.is_empty():
 		emit_signal("joints_received", out)
+
+
+func _handle_health(msg: Dictionary) -> void:
+	# Dukung dua bentuk: std_msgs/String (field "data" = JSON) atau name/level langsung.
+	if msg.has("data"):
+		var parsed = JSON.parse_string(String(msg["data"]))
+		if typeof(parsed) == TYPE_DICTIONARY:
+			msg = parsed
+	var names: Array = msg.get("name", [])
+	var level: Array = msg.get("level", [])      # 0=ok, 1=warn, 2=fault
+	var out := {}
+	for i in range(min(names.size(), level.size())):
+		var lv := int(level[i])
+		out[String(names[i])] = "fault" if lv >= 2 else ("warn" if lv == 1 else "ok")
+	if not out.is_empty():
+		emit_signal("health_received", out)
 
 
 # Kirim perintah joint ke robot (arah operator -> robot).

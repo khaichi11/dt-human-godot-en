@@ -45,6 +45,8 @@ var _links: Dictionary = {}
 
 var model_root: Node3D
 var _frame_mat: StandardMaterial3D
+var _link_mats := {}            # joint_name -> StandardMaterial3D (per-link)
+var _health := {}               # joint_name -> "ok" | "warn" | "fault"
 
 
 func _ready() -> void:
@@ -143,7 +145,13 @@ func _attach_mesh(parent: Node3D, mesh_basename: String, joint_name: String) -> 
 	var mi := MeshInstance3D.new()
 	mi.name = mesh_basename
 	mi.mesh = mesh
-	mi.material_override = _frame_mat
+	# Tiap link punya material sendiri agar bisa diberi warna health terpisah
+	if joint_name != "":
+		var lm := _frame_mat.duplicate()
+		mi.material_override = lm
+		_link_mats[joint_name] = lm
+	else:
+		mi.material_override = _frame_mat
 	parent.add_child(mi)
 
 	# Collision (convex) supaya link bisa diklik di 3D untuk memilih jointnya
@@ -194,6 +202,52 @@ func _find_mesh(node: Node) -> Mesh:
 # ============================================================================
 func _process(_delta: float) -> void:
 	_ground_to_floor()
+	_blink_health()
+
+
+# ============================================================================
+# SERVO HEALTH — servo bermasalah membuat link-nya kedip merah <-> hitam.
+# state: "ok" (normal/metal), "warn" (kuning pelan), "fault" (merah kedip).
+# Sumber state: pembaca Dynamixel (hardware_error_status, suhu, overload) via
+# koneksi — lihat RosBridge / topic /dt/servo_health.
+# ============================================================================
+func set_servo_health(joint_name: String, state: String) -> void:
+	if not _link_mats.has(joint_name):
+		return
+	_health[joint_name] = state
+	if state == "ok":
+		var m: StandardMaterial3D = _link_mats[joint_name]
+		m.albedo_color = COL_FRAME
+		m.metallic = 0.85
+		m.emission_enabled = false
+
+
+func get_servo_health(joint_name: String) -> String:
+	return _health.get(joint_name, "ok")
+
+
+func _blink_health() -> void:
+	if _health.is_empty():
+		return
+	var t := Time.get_ticks_msec() / 1000.0
+	for jname in _health:
+		var state: String = _health[jname]
+		if state == "ok":
+			continue
+		var m: StandardMaterial3D = _link_mats.get(jname)
+		if m == null:
+			continue
+		m.metallic = 0.1
+		m.emission_enabled = true
+		if state == "fault":
+			# merah <-> hitam, kedip cepat
+			var s := (sin(t * 9.0) + 1.0) * 0.5
+			m.albedo_color = Color(0.05, 0.02, 0.02).lerp(Color(0.95, 0.08, 0.08), s)
+			m.emission = Color(0.9, 0.05, 0.05) * s
+		else:   # warn — kuning berkedip pelan
+			var s := (sin(t * 3.0) + 1.0) * 0.5
+			m.albedo_color = Color(0.35, 0.30, 0.05).lerp(Color(0.95, 0.78, 0.15), s)
+			m.emission = Color(0.9, 0.7, 0.1) * s * 0.6
 
 
 func _stand_on_floor() -> void:
