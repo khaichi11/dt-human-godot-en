@@ -50,8 +50,12 @@ var _frame_mat: StandardMaterial3D
 func _ready() -> void:
 	_frame_mat = StandardMaterial3D.new()
 	_frame_mat.albedo_color = COL_FRAME
-	_frame_mat.metallic = 0.45
-	_frame_mat.roughness = 0.42
+	_frame_mat.metallic = 0.85           # besi/aluminium — perlu environment refleksi
+	_frame_mat.roughness = 0.38
+	_frame_mat.metallic_specular = 0.6
+	_frame_mat.rim_enabled = true        # rim halus mempertegas tepi/bentuk
+	_frame_mat.rim = 0.3
+	_frame_mat.rim_tint = 0.5
 
 	model_root = Node3D.new()
 	model_root.name = "ModelRoot"

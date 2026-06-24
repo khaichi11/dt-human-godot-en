@@ -23,6 +23,42 @@ const JOINT_NAMES := [
 	"head_pan",     "head_tilt",
 ]
 
+# Grafik garis ringan (inner class — tanpa file baru)
+class Sparkline extends Control:
+	var values := PackedFloat32Array()
+	var cap := 140
+	var line_col := Color(0.55, 0.45, 0.86)
+	var vmin := -180.0
+	var vmax := 180.0
+
+	func push(v: float) -> void:
+		values.append(v)
+		if values.size() > cap:
+			values.remove_at(0)
+		queue_redraw()
+
+	func _draw() -> void:
+		var w := size.x
+		var h := size.y
+		# grid garis tengah + atas/bawah
+		var grid := Color(0.90, 0.88, 0.94)
+		draw_line(Vector2(0, h * 0.5), Vector2(w, h * 0.5), grid, 1.0)
+		draw_line(Vector2(0, h - 1), Vector2(w, h - 1), grid, 1.0)
+		draw_line(Vector2(0, 1), Vector2(w, 1), grid, 1.0)
+		if values.size() < 2:
+			return
+		var pts := PackedVector2Array()
+		for i in values.size():
+			var x := w * float(i) / float(cap - 1)
+			var t := (values[i] - vmin) / (vmax - vmin)
+			var y := h * (1.0 - clampf(t, 0.0, 1.0))
+			pts.append(Vector2(x, y))
+		draw_polyline(pts, line_col, 2.0, true)
+
+
+var graph_spark: Sparkline
+var graph_lbl: Label
+
 # Referensi node yang dibuat dinamis agar bisa di-update tiap frame
 var battery_bar: ProgressBar
 var battery_voltage_lbl: Label
@@ -96,6 +132,7 @@ func _build() -> void:
 	col.add_child(_build_status_header())
 	col.add_child(_build_poses_section())
 	col.add_child(_build_battery_section())
+	col.add_child(_build_graph_section())
 	col.add_child(_build_imu_section())
 	col.add_child(_build_joints_section())
 	col.add_child(_build_system_section())
@@ -116,24 +153,34 @@ func _bold_font() -> FontVariation:
 	return _bold_cache
 
 
-func _make_card(title: String) -> VBoxContainer:
+const PAS_PURPLE := Color(0.62, 0.52, 0.92)
+const PAS_MINT   := Color(0.42, 0.78, 0.65)
+const PAS_SKY    := Color(0.46, 0.71, 0.94)
+const PAS_PEACH  := Color(0.98, 0.68, 0.58)
+const PAS_AMBER  := Color(0.97, 0.80, 0.46)
+
+
+func _make_card(title: String, badge := PAS_PURPLE) -> VBoxContainer:
 	var panel := PanelContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(1.0, 1.0, 1.0)
-	sb.border_color = Color(0.86, 0.88, 0.91)
+	sb.border_color = Color(0.91, 0.89, 0.95)
 	sb.border_width_left = 1
 	sb.border_width_right = 1
 	sb.border_width_top = 1
 	sb.border_width_bottom = 1
-	sb.corner_radius_top_left = 6
-	sb.corner_radius_top_right = 6
-	sb.corner_radius_bottom_left = 6
-	sb.corner_radius_bottom_right = 6
-	sb.content_margin_left = 12
-	sb.content_margin_right = 12
-	sb.content_margin_top = 10
-	sb.content_margin_bottom = 12
+	sb.corner_radius_top_left = 14
+	sb.corner_radius_top_right = 14
+	sb.corner_radius_bottom_left = 14
+	sb.corner_radius_bottom_right = 14
+	sb.content_margin_left = 14
+	sb.content_margin_right = 14
+	sb.content_margin_top = 12
+	sb.content_margin_bottom = 14
+	sb.shadow_color = Color(0.55, 0.50, 0.70, 0.12)
+	sb.shadow_size = 6
+	sb.shadow_offset = Vector2(0, 3)
 	panel.add_theme_stylebox_override("panel", sb)
 
 	var vb := VBoxContainer.new()
@@ -141,15 +188,24 @@ func _make_card(title: String) -> VBoxContainer:
 	panel.add_child(vb)
 
 	var header := HBoxContainer.new()
-	var bullet := ColorRect.new()
-	bullet.color = Color(0.13, 0.45, 0.95)
-	bullet.custom_minimum_size = Vector2(3, 14)
-	header.add_child(bullet)
+	header.add_theme_constant_override("separation", 8)
+
+	# Badge bulat pastel per-seksi
+	var badge_p := Panel.new()
+	badge_p.custom_minimum_size = Vector2(18, 18)
+	var bsb := StyleBoxFlat.new()
+	bsb.bg_color = badge
+	bsb.corner_radius_top_left = 6
+	bsb.corner_radius_top_right = 6
+	bsb.corner_radius_bottom_left = 6
+	bsb.corner_radius_bottom_right = 6
+	badge_p.add_theme_stylebox_override("panel", bsb)
+	header.add_child(badge_p)
 
 	var title_lbl := Label.new()
-	title_lbl.text = "  " + title.to_upper()
+	title_lbl.text = title.to_upper()
 	title_lbl.add_theme_font_size_override("font_size", 11)
-	title_lbl.add_theme_color_override("font_color", Color(0.45, 0.49, 0.55))
+	title_lbl.add_theme_color_override("font_color", Color(0.40, 0.38, 0.50))
 	var bf := _bold_font()
 	if bf:
 		title_lbl.add_theme_font_override("font", bf)
@@ -182,8 +238,8 @@ func _add_card_to(_parent: Container, _content: VBoxContainer) -> void:
 func _build_status_header() -> PanelContainer:
 	var panel := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.96, 0.97, 0.98)
-	sb.border_color = Color(0.80, 0.85, 0.92)
+	sb.bg_color = Color(0.97, 0.96, 0.99)
+	sb.border_color = Color(0.84, 0.80, 0.93)
 	sb.border_width_left = 1
 	sb.border_width_right = 1
 	sb.border_width_top = 1
@@ -295,8 +351,25 @@ func _on_stop() -> void:
 		_robot_ref.go_default()
 
 
+func _build_graph_section() -> PanelContainer:
+	var content := _make_card("Tren Sudut Joint", PAS_SKY)
+
+	graph_lbl = Label.new()
+	graph_lbl.text = "— (pilih joint)"
+	graph_lbl.add_theme_font_size_override("font_size", 11)
+	graph_lbl.add_theme_color_override("font_color", Color(0.40, 0.38, 0.50))
+	content.add_child(graph_lbl)
+
+	graph_spark = Sparkline.new()
+	graph_spark.custom_minimum_size = Vector2(0, 64)
+	graph_spark.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.add_child(graph_spark)
+
+	return content.get_meta("card_panel")
+
+
 func _build_battery_section() -> PanelContainer:
-	var content := _make_card("Battery · LiPo 3S")
+	var content := _make_card("Battery · LiPo 3S", PAS_MINT)
 
 	# Bar besar
 	battery_bar = ProgressBar.new()
@@ -360,13 +433,13 @@ func _add_kv(grid: GridContainer, key: String, value: String) -> Label:
 # 3) IMU SECTION
 # ----------------------------------------------------------------------------
 func _build_imu_section() -> PanelContainer:
-	var content := _make_card("IMU Sensor · MPU-9250")
+	var content := _make_card("IMU Sensor · MPU-9250", PAS_SKY)
 
 	# Tiga sub-grup: Gyro / Accel / Orientation
 	content.add_child(_build_imu_subgroup("Gyroscope (°/s)", imu_gyro_lbls,
-		Color(1.0, 0.45, 0.45), Color(0.0, 0.62, 0.35), Color(0.13, 0.45, 0.95)))
+		Color(1.0, 0.45, 0.45), Color(0.0, 0.62, 0.35), Color(0.55, 0.45, 0.86)))
 	content.add_child(_build_imu_subgroup("Accelerometer (m/s²)", imu_accel_lbls,
-		Color(1.0, 0.45, 0.45), Color(0.0, 0.62, 0.35), Color(0.13, 0.45, 0.95)))
+		Color(1.0, 0.45, 0.45), Color(0.0, 0.62, 0.35), Color(0.55, 0.45, 0.86)))
 	content.add_child(_build_imu_orientation_group())
 
 	return content.get_meta("card_panel")
@@ -461,7 +534,7 @@ func _build_imu_orientation_group() -> Control:
 
 		var lab := Label.new()
 		lab.text = kv[0]
-		lab.add_theme_color_override("font_color", Color(0.13, 0.45, 0.95))
+		lab.add_theme_color_override("font_color", Color(0.55, 0.45, 0.86))
 		lab.add_theme_font_size_override("font_size", 10)
 		inner.add_child(lab)
 
@@ -481,7 +554,7 @@ func _build_imu_orientation_group() -> Control:
 # 4) JOINTS SECTION (20 DOF)
 # ----------------------------------------------------------------------------
 func _build_joints_section() -> PanelContainer:
-	var content := _make_card("Joints · 20 DOF — klik nama / geser slider untuk kontrol")
+	var content := _make_card("Joints · 20 DOF — klik nama, geser slider", PAS_PEACH)
 
 	# Baris-baris joint: [nama (tombol)] [slider] [sudut]
 	var rows := VBoxContainer.new()
@@ -527,7 +600,7 @@ func _build_joints_section() -> PanelContainer:
 		# Nilai sudut
 		var angle_lbl := Label.new()
 		angle_lbl.text = "+0.0°"
-		angle_lbl.add_theme_color_override("font_color", Color(0.13, 0.45, 0.95))
+		angle_lbl.add_theme_color_override("font_color", Color(0.55, 0.45, 0.86))
 		angle_lbl.add_theme_font_size_override("font_size", 11)
 		angle_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		angle_lbl.custom_minimum_size = Vector2(48, 0)
@@ -631,7 +704,7 @@ func _make_th(parent: Container, text: String) -> void:
 # 5) SYSTEM SECTION
 # ----------------------------------------------------------------------------
 func _build_system_section() -> PanelContainer:
-	var content := _make_card("System")
+	var content := _make_card("System", PAS_AMBER)
 
 	var grid := GridContainer.new()
 	grid.columns = 2
@@ -666,12 +739,20 @@ func update_from_robot(robot: Node3D) -> void:
 				elif abs_deg > 30.0:
 					lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
 				else:
-					lbl.add_theme_color_override("font_color", Color(0.13, 0.45, 0.95))
+					lbl.add_theme_color_override("font_color", Color(0.55, 0.45, 0.86))
 				# Slider mengikuti sudut robot (kecuali yang sedang diseret user)
 				if joint_sliders.has(jname) and _active_slider != jname:
 					_updating_ui = true
 					joint_sliders[jname].value = deg
 					_updating_ui = false
+
+	# 1b. Grafik tren joint terpilih (atau r_knee default)
+	if graph_spark:
+		var gj := _sel_joint if _sel_joint != "" else "r_knee"
+		if robot.has_method("get_joint_angle"):
+			graph_spark.push(rad_to_deg(robot.get_joint_angle(gj)))
+			if graph_lbl:
+				graph_lbl.text = "%s  (°)" % gj
 
 	# 2. Mockup IMU (digerakkan dari sin/cos waktu agar kelihatan hidup)
 	var t := Time.get_ticks_msec() / 1000.0

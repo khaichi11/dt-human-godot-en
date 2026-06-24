@@ -12,14 +12,22 @@ const JointManipScript  = preload("res://scripts/JointManipulator.gd")
 const ViewCubeScript    = preload("res://scripts/ViewCube.gd")
 const RosBridgeScript   = preload("res://scripts/RosBridge.gd")
 
-# --- Palet UI putih minimalis (dipakai bersama SensorPanel) -----------------
-const COL_BG       := Color(0.95, 0.96, 0.97)   # latar app
+# --- Palet pastel (dipakai bersama SensorPanel) -----------------------------
+const COL_BG       := Color(0.95, 0.94, 0.98)   # lavender-white
 const COL_PANEL    := Color(1.0, 1.0, 1.0)      # kartu/panel
-const COL_BORDER   := Color(0.86, 0.88, 0.91)
-const COL_TEXT     := Color(0.13, 0.15, 0.18)   # teks utama
-const COL_MUTED    := Color(0.45, 0.49, 0.55)   # teks sekunder
-const COL_ACCENT   := Color(0.13, 0.45, 0.95)   # aksen biru
-const COL_VIEW_BG  := Color(0.90, 0.92, 0.94)   # latar viewport 3D
+const COL_BORDER   := Color(0.91, 0.89, 0.95)
+const COL_TEXT     := Color(0.22, 0.20, 0.32)   # slate keunguan
+const COL_MUTED    := Color(0.53, 0.51, 0.63)   # teks sekunder
+const COL_ACCENT   := Color(0.55, 0.45, 0.86)   # pastel ungu (aksen utama)
+const COL_VIEW_BG  := Color(0.92, 0.91, 0.96)   # latar viewport 3D
+
+# Aksen pastel per-seksi (badge ikon)
+const PAS_PURPLE := Color(0.62, 0.52, 0.92)
+const PAS_MINT   := Color(0.42, 0.78, 0.65)
+const PAS_SKY    := Color(0.46, 0.71, 0.94)
+const PAS_PEACH  := Color(0.98, 0.68, 0.58)
+const PAS_AMBER  := Color(0.97, 0.80, 0.46)
+const PAS_PINK   := Color(0.93, 0.58, 0.78)
 
 var sensor_panel: Control
 var robot: Node3D
@@ -59,15 +67,18 @@ func _apply_dark_theme() -> void:
 		font_bold.base_font = inter
 		font_bold.variation_opentype = {"wght": 600}
 
-	# Panel/kartu putih dengan border halus
-	var panel_sb := _rounded(COL_PANEL, 8)
+	# Panel/kartu putih dengan border halus + soft shadow pastel
+	var panel_sb := _rounded(COL_PANEL, 14)
 	panel_sb.border_width_left = 1
 	panel_sb.border_width_right = 1
 	panel_sb.border_width_top = 1
 	panel_sb.border_width_bottom = 1
 	panel_sb.border_color = COL_BORDER
+	panel_sb.shadow_color = Color(0.55, 0.50, 0.70, 0.13)
+	panel_sb.shadow_size = 7
+	panel_sb.shadow_offset = Vector2(0, 3)
 	t.set_stylebox("panel", "PanelContainer", panel_sb)
-	t.set_stylebox("panel", "Panel", _rounded(COL_PANEL, 8))
+	t.set_stylebox("panel", "Panel", _rounded(COL_PANEL, 14))
 
 	t.set_color("font_color", "Label", COL_TEXT)
 
@@ -76,18 +87,22 @@ func _apply_dark_theme() -> void:
 	t.set_stylebox("fill", "ProgressBar", _rounded(COL_ACCENT, 4))
 	t.set_color("font_color", "ProgressBar", COL_TEXT)
 
-	# Tombol (flat minimalis)
-	var btn_n := _rounded(Color(0.97, 0.98, 0.99), 6)
+	# Tombol (pill pastel)
+	var btn_n := _rounded(Color(0.97, 0.96, 0.99), 9)
 	btn_n.border_width_bottom = 1; btn_n.border_width_top = 1
 	btn_n.border_width_left = 1; btn_n.border_width_right = 1
 	btn_n.border_color = COL_BORDER
-	var btn_h := _rounded(Color(0.93, 0.95, 0.98), 6)
-	var btn_p := _rounded(Color(0.86, 0.91, 0.99), 6)
+	var btn_h := _rounded(Color(0.93, 0.91, 0.99), 9)
+	btn_h.border_width_bottom = 1; btn_h.border_width_top = 1
+	btn_h.border_width_left = 1; btn_h.border_width_right = 1
+	btn_h.border_color = COL_ACCENT
+	var btn_p := _rounded(Color(0.88, 0.84, 0.98), 9)
 	t.set_stylebox("normal", "Button", btn_n)
 	t.set_stylebox("hover", "Button", btn_h)
 	t.set_stylebox("pressed", "Button", btn_p)
 	t.set_color("font_color", "Button", COL_TEXT)
 	t.set_color("font_hover_color", "Button", COL_ACCENT)
+	t.set_color("font_pressed_color", "Button", COL_ACCENT)
 
 	# LineEdit
 	var le := _rounded(Color(0.98, 0.99, 1.0), 5)
@@ -408,15 +423,24 @@ func _set_view(preset: String) -> void:
 # 3D SCENE
 # ----------------------------------------------------------------------------
 func _build_3d_scene() -> void:
-	# World environment — terang & netral, robot jelas dari segala sudut
+	# World environment — sky lembut pastel untuk refleksi metal + ambient merata
+	var sky_mat := ProceduralSkyMaterial.new()
+	sky_mat.sky_top_color = Color(0.93, 0.92, 0.97)
+	sky_mat.sky_horizon_color = Color(0.88, 0.90, 0.95)
+	sky_mat.ground_horizon_color = Color(0.86, 0.88, 0.93)
+	sky_mat.ground_bottom_color = Color(0.80, 0.82, 0.88)
+	sky_mat.sky_energy_multiplier = 1.0
+	var sky := Sky.new()
+	sky.sky_material = sky_mat
+
 	var env := Environment.new()
-	env.background_mode = Environment.BG_COLOR
-	env.background_color = COL_VIEW_BG
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.70, 0.74, 0.80)
-	env.ambient_light_energy = 0.45            # ambient lembut (tanpa over-expose)
+	env.background_mode = Environment.BG_SKY
+	env.sky = sky
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.ambient_light_energy = 0.9
+	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY  # metal memantulkan sky
 	env.ssao_enabled = true
-	env.ssao_intensity = 1.0
+	env.ssao_intensity = 0.8
 	env.ssao_radius = 0.05
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 
@@ -424,11 +448,11 @@ func _build_3d_scene() -> void:
 	world_env.environment = env
 	sub_viewport.add_child(world_env)
 
-	# Pencahayaan 4 arah lembut supaya robot terbaca dari sudut manapun
-	_add_dir_light(Vector3(-50, -30, 0), 1.0, Color(1, 1, 1), true)     # key (atas-kiri)
-	_add_dir_light(Vector3(-35, 130, 0), 0.5, Color(0.9, 0.95, 1.0))    # fill belakang
-	_add_dir_light(Vector3(-25, 60, 0),  0.35, Color(1, 1, 1))          # fill kanan
-	_add_dir_light(Vector3(40, 10, 0),   0.25, Color(0.95, 0.97, 1.0))  # bawah (isi bayangan)
+	# Pencahayaan: key + fill supaya highlight metal jelas dari segala sudut
+	_add_dir_light(Vector3(-50, -30, 0), 1.1, Color(1.0, 0.99, 0.96), true)  # key hangat
+	_add_dir_light(Vector3(-30, 120, 0), 0.45, Color(0.9, 0.94, 1.0))        # fill dingin
+	_add_dir_light(Vector3(-20, 55, 0),  0.35, Color(1, 1, 1))               # fill kanan
+	_add_dir_light(Vector3(45, 10, 0),   0.2, Color(0.95, 0.97, 1.0))        # bawah
 
 	# Lantai grid
 	var floor := _make_floor()
