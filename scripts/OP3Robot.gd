@@ -261,19 +261,77 @@ func get_joint_angle(joint_name: String) -> float:
 
 
 # ============================================================================
-# POSE DEFAULT — berdiri natural (lengan turun ke sisi badan).
-# Pose-nol URDF membuat lengan terentang horizontal; pose ini menurunkannya.
-# Tanda/derajat ditentukan empiris terhadap axis URDF model ini.
-# Saat integrasi data robot asli, panggil set_joint_angle() yang akan
-# menimpa pose ini per joint.
+# POSE DEFAULT / IDLE = "walk ready" resmi OP3 (ready_pose dari tune_pose.yaml).
+# Sesuai kode asli: robot diam dalam pose walk-ready, dan tiap gerakan/gestur
+# kembali ke sini (perilaku LinkToExit di motion module ROBOTIS).
 # ============================================================================
 const DEFAULT_POSE := {
-	"r_sho_roll": -80.0, "l_sho_roll": 80.0,   # lengan turun ke samping badan
-	"r_el": -25.0,       "l_el": 25.0,         # siku sedikit menekuk
-	"head_tilt": 8.0,                          # kepala sedikit menunduk
+	"r_sho_pitch": 15.0,  "l_sho_pitch": -15.0,
+	"r_sho_roll": -45.0,  "l_sho_roll": 45.0,
+	"r_el": 45.0,         "l_el": -45.0,
+	"r_hip_yaw": 0.0,     "l_hip_yaw": 0.0,
+	"r_hip_roll": 0.0,    "l_hip_roll": 0.0,
+	"r_hip_pitch": 70.0,  "l_hip_pitch": -70.0,
+	"r_knee": -142.0,     "l_knee": 142.0,
+	"r_ank_pitch": -70.0, "l_ank_pitch": 70.0,
+	"r_ank_roll": 0.0,    "l_ank_roll": 0.0,
+	"head_pan": 0.0,      "head_tilt": -10.0,
 }
+
+var _playing := false
 
 
 func _apply_default_pose() -> void:
 	for jname in DEFAULT_POSE.keys():
 		set_joint_angle(jname, deg_to_rad(DEFAULT_POSE[jname]))
+
+
+# ============================================================================
+# PEMUTAR GERAKAN — menganimasikan twin lewat step-step motion ROBOTIS.
+# steps: Array of {"j": {joint: derajat}, "t": detik (durasi), "p": detik (jeda)}
+# return_default: kembali ke pose walk-ready setelah selesai (untuk gestur).
+# ============================================================================
+func play_motion(steps: Array, return_default: bool) -> void:
+	stop_motion()
+	await get_tree().process_frame
+	_playing = true
+	for step in steps:
+		if not _playing:
+			return
+		await _tween_pose(step.get("j", {}), float(step.get("t", 0.4)))
+		var pause := float(step.get("p", 0.0))
+		if pause > 0.0 and _playing:
+			await get_tree().create_timer(pause).timeout
+	if _playing and return_default:
+		await go_default()
+	_playing = false
+
+
+func go_default() -> float:
+	await _tween_pose(_default_pose_deg(), 0.6)
+	return 0.0
+
+
+func stop_motion() -> void:
+	_playing = false
+
+
+func is_playing() -> bool:
+	return _playing
+
+
+func _default_pose_deg() -> Dictionary:
+	return DEFAULT_POSE
+
+
+func _tween_pose(pose_deg: Dictionary, dur: float) -> void:
+	var tw := create_tween().set_parallel(true)
+	tw.set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN_OUT)
+	for jn in pose_deg:
+		tw.tween_method(_tween_set.bind(jn), get_joint_angle(jn),
+			deg_to_rad(float(pose_deg[jn])), maxf(dur, 0.05))
+	await tw.finished
+
+
+func _tween_set(radians: float, joint_name: String) -> void:
+	set_joint_angle(joint_name, radians)

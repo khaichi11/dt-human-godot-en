@@ -26,6 +26,11 @@ URDF, so the on-screen kinematics match the real robot.
   - Forward kinematics: rotating a joint moves every downstream link while the
     parent chain stays fixed.
   - Per-joint sliders in the dashboard, kept in sync with the 3D gizmo.
+- **ROBOTIS motions & poses** — the gesture/action library is read from the
+  original `motion_4095.bin` action file (plus `tune_pose.yaml`) and played back
+  step-by-step with the original timing (salute, wave, clap, sit, stand, push-up,
+  …). The robot idles in the official *walk-ready* pose and returns to it after a
+  gesture, matching the controller's behaviour.
 - **CAD-style camera**
   - Orbit / pan / zoom (left-drag, right-drag or Shift+left-drag, mouse wheel).
   - A clickable **orientation cube** (ViewCube) in the corner.
@@ -47,6 +52,11 @@ URDF, so the on-screen kinematics match the real robot.
 
 No other dependencies. Everything required to run is contained in this
 repository.
+
+**Platforms:** the project is pure Godot/GDScript and uses only engine APIs and
+`res://` asset paths, so it runs unchanged on **Windows, macOS and Linux**. The
+optional `stl2obj.py` tool is plain Python 3. (Only the robot-side rosbridge step
+assumes a ROS 2 machine, which is independent of where the twin runs.)
 
 ---
 
@@ -79,6 +89,7 @@ dt-human-godot-en/
 │   └── Main.tscn                 # entry scene (UI is built in code)
 ├── assets/
 │   ├── op3_meshes/*.obj          # 21 per-link OP3 meshes (used at runtime)
+│   ├── motions.json              # ROBOTIS poses/motions extracted from the action file
 │   └── fonts/Inter.ttf
 └── scripts/
     ├── Main.gd                   # layout, theme, lighting, modes, wiring

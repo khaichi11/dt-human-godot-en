@@ -38,10 +38,11 @@ var joint_temp_lbls := {}   # joint_name => Label (kosong jika tak ditampilkan)
 var joint_sliders := {}     # joint_name => HSlider
 var joint_name_btns := {}   # joint_name => Button
 
-# Pose preset (diekstrak dari data ROBOTIS) — nama => {joint: derajat}
-var poses_data := {}
-var pose_option: OptionButton
-var pose_apply_btn: Button
+# Gerakan/pose (diekstrak dari data ROBOTIS) — nama => {hold, steps:[...]}
+var motions_data := {}
+var motion_option: OptionButton
+var play_btn: Button
+var stop_btn: Button
 
 # Kontrol: referensi robot 3D + manipulator (di-set Main lewat bind_controls)
 var _robot_ref: Node3D
@@ -231,49 +232,67 @@ func _build_status_header() -> PanelContainer:
 # 2) BATTERY SECTION
 # ----------------------------------------------------------------------------
 func _build_poses_section() -> PanelContainer:
-	var content := _make_card("Pose Preset (data ROBOTIS)")
-	_load_poses()
+	var content := _make_card("Gerakan & Pose (data ROBOTIS)")
+	_load_motions()
 
 	var row := HBoxContainer.new()
 	row.add_theme_constant_override("separation", 6)
 	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-	pose_option = OptionButton.new()
-	pose_option.focus_mode = Control.FOCUS_NONE
-	pose_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	for pname in poses_data.keys():
-		pose_option.add_item(pname)
-	row.add_child(pose_option)
+	motion_option = OptionButton.new()
+	motion_option.focus_mode = Control.FOCUS_NONE
+	motion_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for mname in motions_data.keys():
+		motion_option.add_item(mname)
+	row.add_child(motion_option)
 
-	pose_apply_btn = Button.new()
-	pose_apply_btn.text = "Terapkan"
-	pose_apply_btn.focus_mode = Control.FOCUS_NONE
-	pose_apply_btn.custom_minimum_size = Vector2(86, 0)
-	pose_apply_btn.pressed.connect(_on_apply_pose)
-	row.add_child(pose_apply_btn)
+	play_btn = Button.new()
+	play_btn.text = "▶ Play"
+	play_btn.focus_mode = Control.FOCUS_NONE
+	play_btn.custom_minimum_size = Vector2(64, 0)
+	play_btn.pressed.connect(_on_play)
+	row.add_child(play_btn)
+
+	stop_btn = Button.new()
+	stop_btn.text = "■"
+	stop_btn.focus_mode = Control.FOCUS_NONE
+	stop_btn.custom_minimum_size = Vector2(32, 0)
+	stop_btn.pressed.connect(_on_stop)
+	row.add_child(stop_btn)
 
 	content.add_child(row)
 	return content.get_meta("card_panel")
 
 
-func _load_poses() -> void:
-	if not FileAccess.file_exists("res://assets/poses.json"):
+func _load_motions() -> void:
+	if not FileAccess.file_exists("res://assets/motions.json"):
 		return
-	var txt := FileAccess.get_file_as_string("res://assets/poses.json")
+	var txt := FileAccess.get_file_as_string("res://assets/motions.json")
 	var parsed = JSON.parse_string(txt)
 	if typeof(parsed) == TYPE_DICTIONARY:
-		poses_data = parsed
+		motions_data = parsed
 
 
-func _on_apply_pose() -> void:
-	if _robot_ref == null or pose_option == null:
+func _on_play() -> void:
+	if _robot_ref == null or motion_option == null:
 		return
-	var pname := pose_option.get_item_text(pose_option.selected)
-	if not poses_data.has(pname):
+	var mname := motion_option.get_item_text(motion_option.selected)
+	if not motions_data.has(mname):
 		return
-	var pose: Dictionary = poses_data[pname]
-	for jname in pose:
-		_robot_ref.set_joint_angle(jname, deg_to_rad(float(pose[jname])))
+	var m: Dictionary = motions_data[mname]
+	var steps: Array = m.get("steps", [])
+	var hold: bool = m.get("hold", true)
+	if _robot_ref.has_method("play_motion"):
+		_robot_ref.play_motion(steps, not hold)   # gestur (hold=false) balik ke default
+
+
+func _on_stop() -> void:
+	if _robot_ref == null:
+		return
+	if _robot_ref.has_method("stop_motion"):
+		_robot_ref.stop_motion()
+	if _robot_ref.has_method("go_default"):
+		_robot_ref.go_default()
 
 
 func _build_battery_section() -> PanelContainer:
@@ -528,14 +547,17 @@ func bind_controls(robot: Node3D, manipulator: Node) -> void:
 	if manipulator and manipulator.has_signal("joint_rotated"):
 		manipulator.joint_rotated.connect(_on_manip_rotated)
 
-	# Set rentang tiap slider sesuai batas servo joint
+	# Set rentang + nilai awal tiap slider (guard agar tak menulis balik ke robot)
 	if robot and robot.has_method("get_joint_limit"):
+		_updating_ui = true
 		for jname in joint_sliders:
 			var lim: Vector2 = robot.get_joint_limit(jname)
 			var sl: HSlider = joint_sliders[jname]
 			sl.min_value = rad_to_deg(lim.x)
 			sl.max_value = rad_to_deg(lim.y)
+			sl.value = rad_to_deg(robot.get_joint_angle(jname))
 			sl.tooltip_text = "%s: %.0f° … %.0f°" % [jname, sl.min_value, sl.max_value]
+		_updating_ui = false
 
 
 # Mode Atur (true): slider aktif. Mode Live (false): slider mati, panel hanya
@@ -547,10 +569,12 @@ func set_editable(editable: bool) -> void:
 			else Control.MOUSE_FILTER_IGNORE)
 	for jname in joint_name_btns:
 		joint_name_btns[jname].disabled = not editable
-	if pose_apply_btn:
-		pose_apply_btn.disabled = not editable
-	if pose_option:
-		pose_option.disabled = not editable
+	if play_btn:
+		play_btn.disabled = not editable
+	if stop_btn:
+		stop_btn.disabled = not editable
+	if motion_option:
+		motion_option.disabled = not editable
 
 
 func _on_joint_clicked(jname: String) -> void:
