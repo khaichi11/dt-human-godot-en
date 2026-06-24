@@ -201,9 +201,13 @@ func _rotate_selected(mouse: Vector2) -> void:
 	var world_axis := (node.global_transform.basis * axis).normalized()
 	var to_cam := (_camera.global_position - node.global_transform.origin).normalized()
 	var s := 1.0 if world_axis.dot(to_cam) > 0.0 else -1.0
+	# Batas servo per-joint (default ±162 bila robot tak menyediakan)
+	var lim := Vector2(-ANGLE_LIMIT, ANGLE_LIMIT)
+	if _robot.has_method("get_joint_limit"):
+		lim = _robot.get_joint_limit(_selected)
 	# Akumulasi sudut kontinu lalu snap ke detent (gerakan kecil tak hilang)
-	_drag_accum = clamp(_drag_accum - s * d_screen, -ANGLE_LIMIT, ANGLE_LIMIT)
-	var new_ang: float = round(_drag_accum / DETENT) * DETENT
+	_drag_accum = clampf(_drag_accum - s * d_screen, lim.x, lim.y)
+	var new_ang: float = clampf(round(_drag_accum / DETENT) * DETENT, lim.x, lim.y)
 	if is_equal_approx(new_ang, _robot.get_joint_angle(_selected)):
 		return
 	_robot.set_joint_angle(_selected, new_ang)

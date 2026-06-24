@@ -476,6 +476,15 @@ func bind_controls(robot: Node3D, manipulator: Node) -> void:
 	if manipulator and manipulator.has_signal("joint_rotated"):
 		manipulator.joint_rotated.connect(_on_manip_rotated)
 
+	# Set rentang tiap slider sesuai batas servo joint
+	if robot and robot.has_method("get_joint_limit"):
+		for jname in joint_sliders:
+			var lim: Vector2 = robot.get_joint_limit(jname)
+			var sl: HSlider = joint_sliders[jname]
+			sl.min_value = rad_to_deg(lim.x)
+			sl.max_value = rad_to_deg(lim.y)
+			sl.tooltip_text = "%s: %.0f° … %.0f°" % [jname, sl.min_value, sl.max_value]
+
 
 # Mode Atur (true): slider aktif. Mode Live (false): slider mati, panel hanya
 # menampilkan data joint yang masuk dari robot.

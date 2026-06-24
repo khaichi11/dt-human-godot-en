@@ -210,11 +210,43 @@ func _combined_aabb(node: Node, inv_root: Transform3D) -> AABB:
 
 
 # ============================================================================
+# LIMIT SUDUT PER-JOINT (derajat) — rentang kerja realistis OP3.
+# Servo Dynamixel berputar simetris; mekanik sendi yang membatasi. URDF resmi
+# memakai ±162 seragam, jadi nilai di bawah adalah rentang praktis tiap sendi
+# (simetris -> aman terhadap konvensi tanda kiri/kanan).
+# ============================================================================
+const LIMITS_DEG := {
+	"r_sho_pitch": [-165.0, 165.0], "l_sho_pitch": [-165.0, 165.0],
+	"r_sho_roll":  [-95.0, 95.0],   "l_sho_roll":  [-95.0, 95.0],
+	"r_el":        [-95.0, 95.0],   "l_el":        [-95.0, 95.0],
+	"r_hip_yaw":   [-50.0, 50.0],   "l_hip_yaw":   [-50.0, 50.0],
+	"r_hip_roll":  [-35.0, 35.0],   "l_hip_roll":  [-35.0, 35.0],
+	"r_hip_pitch": [-95.0, 95.0],   "l_hip_pitch": [-95.0, 95.0],
+	"r_knee":      [-135.0, 135.0], "l_knee":      [-135.0, 135.0],
+	"r_ank_pitch": [-90.0, 90.0],   "l_ank_pitch": [-90.0, 90.0],
+	"r_ank_roll":  [-35.0, 35.0],   "l_ank_roll":  [-35.0, 35.0],
+	"head_pan":    [-90.0, 90.0],
+	"head_tilt":   [-50.0, 48.0],
+}
+
+
+# Batas joint dalam radian (Vector2(min, max)). Default ±162 (URDF) bila tak ada.
+func get_joint_limit(joint_name: String) -> Vector2:
+	if LIMITS_DEG.has(joint_name):
+		var l: Array = LIMITS_DEG[joint_name]
+		return Vector2(deg_to_rad(l[0]), deg_to_rad(l[1]))
+	return Vector2(-PI * 0.9, PI * 0.9)
+
+
+# ============================================================================
 # PUBLIC API
 # ============================================================================
 func set_joint_angle(joint_name: String, radians: float) -> void:
 	if not joints.has(joint_name):
 		return
+	# Klamp ke batas servo (berlaku untuk slider, gizmo, maupun data live)
+	var lim := get_joint_limit(joint_name)
+	radians = clampf(radians, lim.x, lim.y)
 	var j: Dictionary = joints[joint_name]
 	var node: Node3D = j["node"]
 	var axis: Vector3 = j["axis"]
