@@ -9,6 +9,10 @@
 /ROBOTIS-OP3-Common/
 /ROBOTIS-OP3-msgs/
 
+# --- DT-Human: servo tools + Dynamixel Wizard (reference only, robot-side) ---
+/DT-Human/
+*.run
+
 # --- Heavy source CAD (not used by the app) ---
 *.3mf
 *.stp
