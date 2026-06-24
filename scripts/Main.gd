@@ -10,6 +10,7 @@ const OP3RobotScript    = preload("res://scripts/OP3Robot.gd")
 const CameraOrbitScript = preload("res://scripts/CameraOrbit.gd")
 const JointManipScript  = preload("res://scripts/JointManipulator.gd")
 const ViewCubeScript    = preload("res://scripts/ViewCube.gd")
+const RosBridgeScript   = preload("res://scripts/RosBridge.gd")
 
 # --- Palet UI putih minimalis (dipakai bersama SensorPanel) -----------------
 const COL_BG       := Color(0.95, 0.96, 0.97)   # latar app
@@ -29,6 +30,11 @@ var view_cube: Control
 var mode_btn: Button
 var control_mode := true       # true = Atur (edit), false = Live (terima data)
 var live_driver: Node          # penggerak joint mock saat mode Live
+var ros_bridge: Node           # klien rosbridge WebSocket
+var ros_url_edit: LineEdit
+var ros_status_dot: Panel
+var ros_connect_btn: Button
+var _live_connected := false   # true bila data joint asli sedang masuk
 
 func _ready() -> void:
 	_apply_dark_theme()
@@ -82,6 +88,16 @@ func _apply_dark_theme() -> void:
 	t.set_stylebox("pressed", "Button", btn_p)
 	t.set_color("font_color", "Button", COL_TEXT)
 	t.set_color("font_hover_color", "Button", COL_ACCENT)
+
+	# LineEdit
+	var le := _rounded(Color(0.98, 0.99, 1.0), 5)
+	le.border_width_left = 1; le.border_width_right = 1
+	le.border_width_top = 1; le.border_width_bottom = 1
+	le.border_color = COL_BORDER
+	t.set_stylebox("normal", "LineEdit", le)
+	t.set_stylebox("focus", "LineEdit", le)
+	t.set_color("font_color", "LineEdit", COL_TEXT)
+	t.set_color("caret_color", "LineEdit", COL_ACCENT)
 
 	# HSlider
 	t.set_stylebox("slider", "HSlider", _rounded(Color(0.88, 0.90, 0.93), 3))
@@ -226,6 +242,34 @@ func _build_toolbar() -> Control:
 	sep.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hb.add_child(sep)
 
+	# --- Koneksi robot (rosbridge) ---
+	var ros_lbl := Label.new()
+	ros_lbl.text = "ROBOT"
+	ros_lbl.add_theme_color_override("font_color", COL_MUTED)
+	hb.add_child(ros_lbl)
+
+	ros_status_dot = Panel.new()
+	ros_status_dot.custom_minimum_size = Vector2(10, 10)
+	_set_ros_dot(Color(0.75, 0.78, 0.82))     # abu = belum konek
+	hb.add_child(ros_status_dot)
+
+	ros_url_edit = LineEdit.new()
+	ros_url_edit.text = "ws://127.0.0.1:9090"
+	ros_url_edit.custom_minimum_size = Vector2(170, 28)
+	ros_url_edit.tooltip_text = "Alamat rosbridge_server di robot (ROS 2)"
+	hb.add_child(ros_url_edit)
+
+	ros_connect_btn = Button.new()
+	ros_connect_btn.text = "Connect"
+	ros_connect_btn.focus_mode = Control.FOCUS_NONE
+	ros_connect_btn.custom_minimum_size = Vector2(86, 28)
+	ros_connect_btn.pressed.connect(_on_ros_connect)
+	hb.add_child(ros_connect_btn)
+
+	var sep2 := Control.new()
+	sep2.custom_minimum_size = Vector2(12, 0)
+	hb.add_child(sep2)
+
 	# Tombol mode (Atur / Live)
 	mode_btn = Button.new()
 	mode_btn.focus_mode = Control.FOCUS_NONE
@@ -260,6 +304,50 @@ func _refresh_mode_btn() -> void:
 	else:
 		mode_btn.text = "● MODE: LIVE"
 		mode_btn.add_theme_color_override("font_color", Color(0.0, 0.62, 0.35))
+
+
+# ----------------------------------------------------------------------------
+# Koneksi robot (rosbridge WebSocket, ROS 2)
+# ----------------------------------------------------------------------------
+func _set_ros_dot(c: Color) -> void:
+	if ros_status_dot == null:
+		return
+	var sb := _rounded(c, 5)
+	ros_status_dot.add_theme_stylebox_override("panel", sb)
+
+
+func _on_ros_connect() -> void:
+	if ros_bridge == null:
+		return
+	if ros_bridge.is_open() or ros_bridge._want:
+		ros_bridge.stop()
+		ros_connect_btn.text = "Connect"
+		_set_ros_dot(Color(0.75, 0.78, 0.82))
+		_live_connected = false
+	else:
+		ros_bridge.start(ros_url_edit.text.strip_edges())
+		ros_connect_btn.text = "Disconnect"
+		# masuk mode Live otomatis saat menyambung
+		if control_mode:
+			_toggle_mode()
+
+
+func _on_ros_status(state: String) -> void:
+	match state:
+		"connecting": _set_ros_dot(Color(0.95, 0.70, 0.20))   # kuning
+		"open":       _set_ros_dot(Color(0.0, 0.72, 0.40))     # hijau
+		"closed":
+			_set_ros_dot(Color(0.90, 0.30, 0.30))              # merah
+			_live_connected = false
+
+
+func _on_ros_joints(joints: Dictionary) -> void:
+	# Data joint asli dari robot -> terapkan ke twin (hanya saat mode Live)
+	_live_connected = true
+	if control_mode or robot == null:
+		return
+	for jname in joints:
+		robot.set_joint_angle(jname, joints[jname])
 
 
 func _make_status_dot() -> Control:
@@ -368,6 +456,13 @@ func _build_3d_scene() -> void:
 	if sensor_panel and sensor_panel.has_method("bind_controls"):
 		sensor_panel.bind_controls(robot, manipulator)
 
+	# Klien rosbridge (koneksi ke robot asli)
+	ros_bridge = RosBridgeScript.new()
+	ros_bridge.name = "RosBridge"
+	add_child(ros_bridge)
+	ros_bridge.status_changed.connect(_on_ros_status)
+	ros_bridge.joints_received.connect(_on_ros_joints)
+
 
 func _add_dir_light(rot_deg: Vector3, energy: float, color: Color, shadow := false) -> void:
 	var l := DirectionalLight3D.new()
@@ -425,9 +520,9 @@ func _make_floor() -> Node3D:
 # UPDATE LOOP — kirim data sensor terbaru ke panel kiri
 # ----------------------------------------------------------------------------
 func _process(_delta: float) -> void:
-	# Mode Live: robot digerakkan oleh "data masuk" (mock walking gait).
-	# Di dunia nyata, ganti _drive_live() dengan data dari ROS/serial robot.
-	if not control_mode and robot:
+	# Mode Live: kalau rosbridge tersambung (data joint asli masuk), pakai itu.
+	# Kalau belum tersambung, jalankan gait mock sebagai demo.
+	if not control_mode and robot and not _live_connected:
 		_drive_live()
 
 	if sensor_panel and robot:

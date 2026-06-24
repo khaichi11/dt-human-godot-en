@@ -86,7 +86,8 @@ dt-human-godot-en/
     ├── OP3Robot.gd               # builds the rig from the URDF data + meshes
     ├── JointManipulator.gd       # 3D joint selection + rotation gizmo
     ├── CameraOrbit.gd            # orbit camera + view presets
-    └── ViewCube.gd               # corner orientation cube
+    ├── ViewCube.gd               # corner orientation cube
+    └── RosBridge.gd              # rosbridge WebSocket client (ROS 2)
 ```
 
 The `ROBOTIS-OP3*` source repositories are intentionally **not** committed (they
@@ -144,22 +145,38 @@ operator-driven; in *Live* they follow the incoming data stream.
 
 ---
 
-## Connecting a real robot
+## Connecting a real robot (ROS 2 / rosbridge)
 
-The control path is centralised on one method:
+The twin talks to a physical OP3 over **rosbridge** (WebSocket), so no ROS
+installation is needed on the Godot side. The client lives in
+`scripts/RosBridge.gd`.
+
+On the robot (ROS 2):
+
+```bash
+sudo apt install ros-$ROS_DISTRO-rosbridge-suite
+ros2 launch rosbridge_server rosbridge_websocket_launch.xml   # serves :9090
+```
+
+In the app:
+
+1. Enter the robot address in the toolbar (e.g. `ws://192.168.0.42:9090`).
+2. Click **Connect**. The status dot turns yellow (connecting) then green
+   (connected), and the app switches to **Live** mode.
+3. The twin now mirrors `/robotis/present_joint_states`
+   (`sensor_msgs/msg/JointState`) in real time; the dashboard becomes read-only.
+
+The client auto-reconnects if the link drops. The reverse direction (operator
+→ robot) is available through `RosBridge.publish_joints()`, which advertises and
+publishes to `/robotis/set_joint_states`.
+
+The whole control path funnels through one pair of methods, which is also the
+seam for any other transport (TCP, UDP, serial to OpenCR):
 
 ```gdscript
 robot.set_joint_angle("l_knee", deg_to_rad(45.0))   # set a joint (radians)
 var rad := robot.get_joint_angle("head_pan")         # read a joint
 ```
-
-To drive the twin from a physical OP3, replace `Main._drive_live()` with a node
-that reads the robot's joint states (for example the ROS topic
-`/robotis/present_joint_states`, or a direct OpenCR / CM-740 serial link) and
-calls `set_joint_angle()` each frame. Switch the UI to **Live** mode so the
-sliders become read-only mirrors of the real hardware. The reverse direction
-(sending operator edits back to the robot) uses the same `set_joint_angle`
-values as the command source.
 
 ---
 
