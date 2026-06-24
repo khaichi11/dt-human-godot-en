@@ -1,0 +1,452 @@
+extends Control
+# ============================================================================
+# Main.gd
+# Dashboard utama OP3 Digital Twin.
+# Layout: HSplitContainer => kiri = SensorPanel, kanan = 3D Viewport (OP3 Robot)
+# ============================================================================
+
+const SensorPanelScript = preload("res://scripts/SensorPanel.gd")
+const OP3RobotScript    = preload("res://scripts/OP3Robot.gd")
+const CameraOrbitScript = preload("res://scripts/CameraOrbit.gd")
+const JointManipScript  = preload("res://scripts/JointManipulator.gd")
+const ViewCubeScript    = preload("res://scripts/ViewCube.gd")
+
+# --- Palet UI putih minimalis (dipakai bersama SensorPanel) -----------------
+const COL_BG       := Color(0.95, 0.96, 0.97)   # latar app
+const COL_PANEL    := Color(1.0, 1.0, 1.0)      # kartu/panel
+const COL_BORDER   := Color(0.86, 0.88, 0.91)
+const COL_TEXT     := Color(0.13, 0.15, 0.18)   # teks utama
+const COL_MUTED    := Color(0.45, 0.49, 0.55)   # teks sekunder
+const COL_ACCENT   := Color(0.13, 0.45, 0.95)   # aksen biru
+const COL_VIEW_BG  := Color(0.90, 0.92, 0.94)   # latar viewport 3D
+
+var sensor_panel: Control
+var robot: Node3D
+var sub_viewport: SubViewport
+var orbit_camera: Camera3D
+var manipulator: Node3D
+var view_cube: Control
+var mode_btn: Button
+var control_mode := true       # true = Atur (edit), false = Live (terima data)
+var live_driver: Node          # penggerak joint mock saat mode Live
+
+func _ready() -> void:
+	_apply_dark_theme()
+	_build_layout()
+
+
+# ----------------------------------------------------------------------------
+# THEME
+# ----------------------------------------------------------------------------
+var font_bold: FontVariation
+
+func _apply_dark_theme() -> void:
+	# Tema putih minimalis
+	var t := Theme.new()
+	t.default_font_size = 13
+
+	# Font open-source Inter (UI dashboard yang bersih & jelas)
+	var inter := load("res://assets/fonts/Inter.ttf")
+	if inter:
+		t.default_font = inter
+		font_bold = FontVariation.new()
+		font_bold.base_font = inter
+		font_bold.variation_opentype = {"wght": 600}
+
+	# Panel/kartu putih dengan border halus
+	var panel_sb := _rounded(COL_PANEL, 8)
+	panel_sb.border_width_left = 1
+	panel_sb.border_width_right = 1
+	panel_sb.border_width_top = 1
+	panel_sb.border_width_bottom = 1
+	panel_sb.border_color = COL_BORDER
+	t.set_stylebox("panel", "PanelContainer", panel_sb)
+	t.set_stylebox("panel", "Panel", _rounded(COL_PANEL, 8))
+
+	t.set_color("font_color", "Label", COL_TEXT)
+
+	# ProgressBar
+	t.set_stylebox("background", "ProgressBar", _rounded(Color(0.90, 0.92, 0.94), 4))
+	t.set_stylebox("fill", "ProgressBar", _rounded(COL_ACCENT, 4))
+	t.set_color("font_color", "ProgressBar", COL_TEXT)
+
+	# Tombol (flat minimalis)
+	var btn_n := _rounded(Color(0.97, 0.98, 0.99), 6)
+	btn_n.border_width_bottom = 1; btn_n.border_width_top = 1
+	btn_n.border_width_left = 1; btn_n.border_width_right = 1
+	btn_n.border_color = COL_BORDER
+	var btn_h := _rounded(Color(0.93, 0.95, 0.98), 6)
+	var btn_p := _rounded(Color(0.86, 0.91, 0.99), 6)
+	t.set_stylebox("normal", "Button", btn_n)
+	t.set_stylebox("hover", "Button", btn_h)
+	t.set_stylebox("pressed", "Button", btn_p)
+	t.set_color("font_color", "Button", COL_TEXT)
+	t.set_color("font_hover_color", "Button", COL_ACCENT)
+
+	# HSlider
+	t.set_stylebox("slider", "HSlider", _rounded(Color(0.88, 0.90, 0.93), 3))
+	t.set_stylebox("grabber_area", "HSlider", _rounded(COL_ACCENT, 3))
+	t.set_stylebox("grabber_area_highlight", "HSlider", _rounded(COL_ACCENT, 3))
+
+	# HSplitContainer
+	t.set_stylebox("split_bar_background", "HSplitContainer", _rounded(COL_BORDER, 0))
+
+	theme = t
+
+
+func _rounded(c: Color, r: int) -> StyleBoxFlat:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = c
+	sb.corner_radius_top_left = r
+	sb.corner_radius_top_right = r
+	sb.corner_radius_bottom_left = r
+	sb.corner_radius_bottom_right = r
+	sb.content_margin_left = 6
+	sb.content_margin_right = 6
+	sb.content_margin_top = 3
+	sb.content_margin_bottom = 3
+	return sb
+
+
+# ----------------------------------------------------------------------------
+# LAYOUT
+# ----------------------------------------------------------------------------
+func _build_layout() -> void:
+	# Background container
+	var bg := ColorRect.new()
+	bg.color = COL_BG
+	bg.anchor_right = 1.0
+	bg.anchor_bottom = 1.0
+	bg.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	add_child(bg)
+
+	# Top toolbar (header)
+	var toolbar := _build_toolbar()
+	add_child(toolbar)
+
+	# Split container utama
+	var split := HSplitContainer.new()
+	split.anchor_top = 0.0
+	split.anchor_left = 0.0
+	split.anchor_right = 1.0
+	split.anchor_bottom = 1.0
+	split.offset_top = 56  # ruang untuk toolbar
+	split.offset_left = 8
+	split.offset_right = -8
+	split.offset_bottom = -8
+	split.split_offset = 420  # lebar panel kiri (sensor)
+	add_child(split)
+
+	# === KIRI: Sensor Panel ===
+	var left_wrapper := PanelContainer.new()
+	left_wrapper.custom_minimum_size = Vector2(380, 0)
+	split.add_child(left_wrapper)
+
+	sensor_panel = Control.new()
+	sensor_panel.set_script(SensorPanelScript)
+	left_wrapper.add_child(sensor_panel)
+
+	# === KANAN: 3D Viewport dengan OP3 Robot ===
+	var right_wrapper := PanelContainer.new()
+	split.add_child(right_wrapper)
+
+	var right_vbox := VBoxContainer.new()
+	right_vbox.add_theme_constant_override("separation", 4)
+	right_wrapper.add_child(right_vbox)
+
+	# Header viewport
+	var viewport_header := _build_viewport_header()
+	right_vbox.add_child(viewport_header)
+
+	# Pembungkus viewport (agar ViewCube bisa di-overlay di pojok)
+	var vp_wrap := Control.new()
+	vp_wrap.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	vp_wrap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vp_wrap.clip_contents = true
+	right_vbox.add_child(vp_wrap)
+
+	# SubViewportContainer + SubViewport
+	var sv_container := SubViewportContainer.new()
+	sv_container.set_anchors_preset(Control.PRESET_FULL_RECT)
+	sv_container.stretch = true
+	vp_wrap.add_child(sv_container)
+
+	sub_viewport = SubViewport.new()
+	sub_viewport.size = Vector2i(1024, 768)
+	sub_viewport.handle_input_locally = true
+	sub_viewport.msaa_3d = Viewport.MSAA_4X
+	sub_viewport.render_target_update_mode = SubViewport.UPDATE_ALWAYS
+	sv_container.add_child(sub_viewport)
+
+	_build_3d_scene()
+
+	# ViewCube overlay (pojok kanan atas viewport)
+	view_cube = ViewCubeScript.new()
+	view_cube.set_anchors_preset(Control.PRESET_TOP_RIGHT)
+	view_cube.position = Vector2(-118, 12)
+	vp_wrap.add_child(view_cube)
+	view_cube.setup(orbit_camera)
+
+
+func _build_toolbar() -> Control:
+	var bar := PanelContainer.new()
+	bar.anchor_left = 0
+	bar.anchor_right = 1.0
+	bar.offset_left = 8
+	bar.offset_right = -8
+	bar.offset_top = 8
+	bar.offset_bottom = 48
+
+	var sb := _rounded(COL_PANEL, 8)
+	sb.border_color = COL_BORDER
+	sb.border_width_left = 1
+	sb.border_width_right = 1
+	sb.border_width_top = 1
+	sb.border_width_bottom = 1
+	bar.add_theme_stylebox_override("panel", sb)
+
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 12)
+	bar.add_child(hb)
+
+	# Status indicator (titik hijau)
+	var status_dot := _make_status_dot()
+	hb.add_child(status_dot)
+
+	# Title
+	var title := Label.new()
+	title.text = "ROBOTIS OP3 — DIGITAL TWIN"
+	title.add_theme_font_size_override("font_size", 16)
+	title.add_theme_color_override("font_color", COL_TEXT)
+	if font_bold:
+		title.add_theme_font_override("font", font_bold)
+	hb.add_child(title)
+
+	var sep := Control.new()
+	sep.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hb.add_child(sep)
+
+	# Tombol mode (Atur / Live)
+	mode_btn = Button.new()
+	mode_btn.focus_mode = Control.FOCUS_NONE
+	mode_btn.custom_minimum_size = Vector2(150, 30)
+	mode_btn.pressed.connect(_toggle_mode)
+	hb.add_child(mode_btn)
+	_refresh_mode_btn()
+
+	var build_label := Label.new()
+	build_label.text = "v0.2 · 20 DOF"
+	build_label.add_theme_color_override("font_color", COL_MUTED)
+	hb.add_child(build_label)
+
+	return bar
+
+
+func _toggle_mode() -> void:
+	control_mode = not control_mode
+	_refresh_mode_btn()
+	if manipulator and manipulator.has_method("set_editable"):
+		manipulator.set_editable(control_mode)
+	if sensor_panel and sensor_panel.has_method("set_editable"):
+		sensor_panel.set_editable(control_mode)
+
+
+func _refresh_mode_btn() -> void:
+	if mode_btn == null:
+		return
+	if control_mode:
+		mode_btn.text = "● MODE: ATUR"
+		mode_btn.add_theme_color_override("font_color", COL_ACCENT)
+	else:
+		mode_btn.text = "● MODE: LIVE"
+		mode_btn.add_theme_color_override("font_color", Color(0.0, 0.62, 0.35))
+
+
+func _make_status_dot() -> Control:
+	var dot := Panel.new()
+	dot.custom_minimum_size = Vector2(12, 12)
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.0, 0.95, 0.5)
+	sb.corner_radius_top_left = 6
+	sb.corner_radius_top_right = 6
+	sb.corner_radius_bottom_left = 6
+	sb.corner_radius_bottom_right = 6
+	dot.add_theme_stylebox_override("panel", sb)
+	return dot
+
+
+func _build_viewport_header() -> Control:
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 8)
+
+	var lbl := Label.new()
+	lbl.text = "  3D VIEW"
+	lbl.add_theme_color_override("font_color", COL_MUTED)
+	hb.add_child(lbl)
+
+	# Tombol preset kamera
+	for preset in [["Depan", "depan"], ["Blkg", "belakang"], ["Kiri", "kiri"],
+			["Kanan", "kanan"], ["Atas", "atas"], ["Bawah", "bawah"], ["Iso", "iso"]]:
+		hb.add_child(_make_view_btn(preset[0], preset[1]))
+
+	var sep := Control.new()
+	sep.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hb.add_child(sep)
+
+	var hint := Label.new()
+	hint.text = "Klik servo / pilih di panel · drag = putar (detent) · drag kosong = orbit  "
+	hint.add_theme_color_override("font_color", COL_MUTED)
+	hb.add_child(hint)
+
+	return hb
+
+
+func _make_view_btn(text: String, preset: String) -> Button:
+	var b := Button.new()
+	b.text = text
+	b.focus_mode = Control.FOCUS_NONE
+	b.add_theme_font_size_override("font_size", 11)
+	b.custom_minimum_size = Vector2(46, 24)
+	b.pressed.connect(_set_view.bind(preset))
+	return b
+
+
+func _set_view(preset: String) -> void:
+	if orbit_camera and orbit_camera.has_method("apply_view"):
+		orbit_camera.apply_view(preset)
+
+
+# ----------------------------------------------------------------------------
+# 3D SCENE
+# ----------------------------------------------------------------------------
+func _build_3d_scene() -> void:
+	# World environment — terang & netral, robot jelas dari segala sudut
+	var env := Environment.new()
+	env.background_mode = Environment.BG_COLOR
+	env.background_color = COL_VIEW_BG
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
+	env.ambient_light_color = Color(0.70, 0.74, 0.80)
+	env.ambient_light_energy = 0.45            # ambient lembut (tanpa over-expose)
+	env.ssao_enabled = true
+	env.ssao_intensity = 1.0
+	env.ssao_radius = 0.05
+	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
+
+	var world_env := WorldEnvironment.new()
+	world_env.environment = env
+	sub_viewport.add_child(world_env)
+
+	# Pencahayaan 4 arah lembut supaya robot terbaca dari sudut manapun
+	_add_dir_light(Vector3(-50, -30, 0), 1.0, Color(1, 1, 1), true)     # key (atas-kiri)
+	_add_dir_light(Vector3(-35, 130, 0), 0.5, Color(0.9, 0.95, 1.0))    # fill belakang
+	_add_dir_light(Vector3(-25, 60, 0),  0.35, Color(1, 1, 1))          # fill kanan
+	_add_dir_light(Vector3(40, 10, 0),   0.25, Color(0.95, 0.97, 1.0))  # bawah (isi bayangan)
+
+	# Lantai grid
+	var floor := _make_floor()
+	sub_viewport.add_child(floor)
+
+	# OP3 Robot
+	robot = Node3D.new()
+	robot.set_script(OP3RobotScript)
+	sub_viewport.add_child(robot)
+
+	# Orbit camera
+	orbit_camera = Camera3D.new()
+	orbit_camera.set_script(CameraOrbitScript)
+	orbit_camera.current = true
+	sub_viewport.add_child(orbit_camera)
+
+	# Kontrol joint interaktif (ring di joint terpilih, dipilih dari panel kiri)
+	manipulator = Node3D.new()
+	manipulator.set_script(JointManipScript)
+	sub_viewport.add_child(manipulator)
+	# deferred: pastikan OP3Robot._ready (yang mengisi joints) sudah jalan
+	manipulator.call_deferred("setup", robot, orbit_camera)
+
+	# Hubungkan panel kiri ke robot + manipulator (slider & pilih joint)
+	if sensor_panel and sensor_panel.has_method("bind_controls"):
+		sensor_panel.bind_controls(robot, manipulator)
+
+
+func _add_dir_light(rot_deg: Vector3, energy: float, color: Color, shadow := false) -> void:
+	var l := DirectionalLight3D.new()
+	l.rotation_degrees = rot_deg
+	l.light_energy = energy
+	l.light_color = color
+	l.shadow_enabled = shadow
+	sub_viewport.add_child(l)
+
+
+func _make_floor() -> Node3D:
+	var holder := Node3D.new()
+
+	# Plane
+	var plane_mesh := PlaneMesh.new()
+	plane_mesh.size = Vector2(6, 6)
+
+	var plane_inst := MeshInstance3D.new()
+	plane_inst.mesh = plane_mesh
+
+	var plane_mat := StandardMaterial3D.new()
+	plane_mat.albedo_color = Color(0.84, 0.86, 0.89)
+	plane_mat.roughness = 0.95
+	plane_mat.metallic = 0.0
+	plane_inst.material_override = plane_mat
+	holder.add_child(plane_inst)
+
+	# Grid lines (procedural via ImmediateMesh)
+	var grid_mesh := ImmediateMesh.new()
+	var grid_mat := StandardMaterial3D.new()
+	grid_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	grid_mat.albedo_color = Color(0.62, 0.66, 0.72, 0.7)
+	grid_mat.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+
+	grid_mesh.surface_begin(Mesh.PRIMITIVE_LINES, grid_mat)
+	var size := 3.0
+	var step := 0.25
+	var v := -size
+	while v <= size + 0.001:
+		grid_mesh.surface_add_vertex(Vector3(-size, 0.001, v))
+		grid_mesh.surface_add_vertex(Vector3(size, 0.001, v))
+		grid_mesh.surface_add_vertex(Vector3(v, 0.001, -size))
+		grid_mesh.surface_add_vertex(Vector3(v, 0.001, size))
+		v += step
+	grid_mesh.surface_end()
+
+	var grid_inst := MeshInstance3D.new()
+	grid_inst.mesh = grid_mesh
+	holder.add_child(grid_inst)
+
+	return holder
+
+
+# ----------------------------------------------------------------------------
+# UPDATE LOOP — kirim data sensor terbaru ke panel kiri
+# ----------------------------------------------------------------------------
+func _process(_delta: float) -> void:
+	# Mode Live: robot digerakkan oleh "data masuk" (mock walking gait).
+	# Di dunia nyata, ganti _drive_live() dengan data dari ROS/serial robot.
+	if not control_mode and robot:
+		_drive_live()
+
+	if sensor_panel and robot:
+		# Sinkronkan posisi joint ke panel (slider & angka ikut)
+		if sensor_panel.has_method("update_from_robot"):
+			sensor_panel.update_from_robot(robot)
+
+
+func _drive_live() -> void:
+	# Simulasi data joint masuk dari robot asli (gait berjalan halus).
+	var t := Time.get_ticks_msec() / 1000.0
+	var sw := sin(t * 2.0)
+	var sw2 := sin(t * 2.0 + PI)
+	robot.set_joint_angle("l_hip_pitch", deg_to_rad(-15.0 + sw * 18.0))
+	robot.set_joint_angle("r_hip_pitch", deg_to_rad(-15.0 + sw2 * 18.0))
+	robot.set_joint_angle("l_knee", deg_to_rad(30.0 + max(0.0, sw) * 25.0))
+	robot.set_joint_angle("r_knee", deg_to_rad(30.0 + max(0.0, sw2) * 25.0))
+	robot.set_joint_angle("l_ank_pitch", deg_to_rad(-15.0 - max(0.0, sw) * 8.0))
+	robot.set_joint_angle("r_ank_pitch", deg_to_rad(-15.0 - max(0.0, sw2) * 8.0))
+	robot.set_joint_angle("l_sho_pitch", deg_to_rad(sw2 * 20.0))
+	robot.set_joint_angle("r_sho_pitch", deg_to_rad(sw * 20.0))
+	robot.set_joint_angle("head_pan", sin(t * 0.5) * 0.3)

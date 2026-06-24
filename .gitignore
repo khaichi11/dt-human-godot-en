@@ -1,0 +1,24 @@
+# --- Godot ---
+.godot/
+*.tmp
+*.import.bak
+
+# --- Reference repositories (cloned from ROBOTIS; NOT required at runtime) ---
+# The per-link meshes have already been converted into assets/op3_meshes/.
+/ROBOTIS-OP3/
+/ROBOTIS-OP3-Common/
+/ROBOTIS-OP3-msgs/
+
+# --- Heavy source CAD (not used by the app) ---
+*.3mf
+*.stp
+*.step
+*.STEP
+
+# --- Stray directory created by an earlier shell glob ---
+{scripts,scenes,assets}/
+
+# --- OS / editor ---
+.DS_Store
+Thumbs.db
+*.swp
