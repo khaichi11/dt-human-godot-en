@@ -22,3 +22,8 @@
 .DS_Store
 Thumbs.db
 *.swp
+
+# stray render artifacts
+pose_*.png
+pose_*.png.import
+*_row.png*

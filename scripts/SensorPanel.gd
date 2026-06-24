@@ -38,6 +38,11 @@ var joint_temp_lbls := {}   # joint_name => Label (kosong jika tak ditampilkan)
 var joint_sliders := {}     # joint_name => HSlider
 var joint_name_btns := {}   # joint_name => Button
 
+# Pose preset (diekstrak dari data ROBOTIS) — nama => {joint: derajat}
+var poses_data := {}
+var pose_option: OptionButton
+var pose_apply_btn: Button
+
 # Kontrol: referensi robot 3D + manipulator (di-set Main lewat bind_controls)
 var _robot_ref: Node3D
 var _manip_ref: Node
@@ -88,6 +93,7 @@ func _build() -> void:
 	pad.add_child(col)
 
 	col.add_child(_build_status_header())
+	col.add_child(_build_poses_section())
 	col.add_child(_build_battery_section())
 	col.add_child(_build_imu_section())
 	col.add_child(_build_joints_section())
@@ -224,6 +230,52 @@ func _build_status_header() -> PanelContainer:
 # ----------------------------------------------------------------------------
 # 2) BATTERY SECTION
 # ----------------------------------------------------------------------------
+func _build_poses_section() -> PanelContainer:
+	var content := _make_card("Pose Preset (data ROBOTIS)")
+	_load_poses()
+
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 6)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	pose_option = OptionButton.new()
+	pose_option.focus_mode = Control.FOCUS_NONE
+	pose_option.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	for pname in poses_data.keys():
+		pose_option.add_item(pname)
+	row.add_child(pose_option)
+
+	pose_apply_btn = Button.new()
+	pose_apply_btn.text = "Terapkan"
+	pose_apply_btn.focus_mode = Control.FOCUS_NONE
+	pose_apply_btn.custom_minimum_size = Vector2(86, 0)
+	pose_apply_btn.pressed.connect(_on_apply_pose)
+	row.add_child(pose_apply_btn)
+
+	content.add_child(row)
+	return content.get_meta("card_panel")
+
+
+func _load_poses() -> void:
+	if not FileAccess.file_exists("res://assets/poses.json"):
+		return
+	var txt := FileAccess.get_file_as_string("res://assets/poses.json")
+	var parsed = JSON.parse_string(txt)
+	if typeof(parsed) == TYPE_DICTIONARY:
+		poses_data = parsed
+
+
+func _on_apply_pose() -> void:
+	if _robot_ref == null or pose_option == null:
+		return
+	var pname := pose_option.get_item_text(pose_option.selected)
+	if not poses_data.has(pname):
+		return
+	var pose: Dictionary = poses_data[pname]
+	for jname in pose:
+		_robot_ref.set_joint_angle(jname, deg_to_rad(float(pose[jname])))
+
+
 func _build_battery_section() -> PanelContainer:
 	var content := _make_card("Battery · LiPo 3S")
 
@@ -495,6 +547,10 @@ func set_editable(editable: bool) -> void:
 			else Control.MOUSE_FILTER_IGNORE)
 	for jname in joint_name_btns:
 		joint_name_btns[jname].disabled = not editable
+	if pose_apply_btn:
+		pose_apply_btn.disabled = not editable
+	if pose_option:
+		pose_option.disabled = not editable
 
 
 func _on_joint_clicked(jname: String) -> void:
