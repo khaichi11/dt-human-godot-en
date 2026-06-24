@@ -9,6 +9,10 @@
 /ROBOTIS-OP3-Common/
 /ROBOTIS-OP3-msgs/
 
+# --- DT-Human: servo tools + Dynamixel Wizard (reference only, robot-side) ---
+/DT-Human/
+*.run
+
 # --- Heavy source CAD (not used by the app) ---
 *.3mf
 *.stp
@@ -22,3 +26,8 @@
 .DS_Store
 Thumbs.db
 *.swp
+
+# stray render artifacts
+pose_*.png
+pose_*.png.import
+*_row.png*
