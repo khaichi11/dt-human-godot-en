@@ -11,19 +11,23 @@ extends Control
 const SIZE := 104
 
 # sisi: arah dunia (Godot) -> preset kamera. Robot menghadap -Z.
+# Label F/B/L/R/U/D (standar software 3D) — jelas & muat di kubus kecil.
 const FACES := [
-	[Vector3(0, 0, -1), "depan",    "DEPAN"],
-	[Vector3(0, 0, 1),  "belakang", "BLKG"],
-	[Vector3(1, 0, 0),  "kanan",    "KA"],
-	[Vector3(-1, 0, 0), "kiri",     "KI"],
-	[Vector3(0, 1, 0),  "atas",     "ATAS"],
-	[Vector3(0, -1, 0), "bawah",    "BWH"],
+	[Vector3(0, 0, -1), "depan",    "F"],
+	[Vector3(0, 0, 1),  "belakang", "B"],
+	[Vector3(1, 0, 0),  "kanan",    "R"],
+	[Vector3(-1, 0, 0), "kiri",     "L"],
+	[Vector3(0, 1, 0),  "atas",     "U"],
+	[Vector3(0, -1, 0), "bawah",    "D"],
 ]
+const MENU := [["Isometrik", "iso"], ["Depan", "depan"], ["Belakang", "belakang"],
+	["Kiri", "kiri"], ["Kanan", "kanan"], ["Atas", "atas"], ["Bawah", "bawah"]]
 
 var _main_cam: Camera3D
 var _vp: SubViewport
 var _cube: Node3D
 var _vp_cam: Camera3D
+var _menu: PopupMenu
 
 
 func setup(main_cam: Camera3D) -> void:
@@ -125,9 +129,11 @@ func _build_cube() -> void:
 		# belakang tertutup kubus
 		var lbl := Label3D.new()
 		lbl.text = label
-		lbl.font_size = 72
-		lbl.pixel_size = 0.0036
-		lbl.modulate = Color(0.10, 0.22, 0.40)
+		lbl.font_size = 96
+		lbl.pixel_size = 0.0050
+		lbl.modulate = Color(0.30, 0.26, 0.45)
+		lbl.outline_size = 10
+		lbl.outline_modulate = Color(1, 1, 1, 0.9)
 		lbl.billboard = BaseMaterial3D.BILLBOARD_ENABLED
 		lbl.position = dir * 0.52
 		_cube.add_child(lbl)
@@ -141,9 +147,34 @@ func _process(_delta: float) -> void:
 
 
 func _gui_input(event: InputEvent) -> void:
-	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT and event.pressed:
-		_pick_face(event.position)
+	if not (event is InputEventMouseButton and event.pressed):
+		return
+	if event.button_index == MOUSE_BUTTON_LEFT:
+		if event.double_click:
+			_apply("depan")          # dobel-klik = hadap depan (home)
+		else:
+			_pick_face(event.position)
 		accept_event()
+	elif event.button_index == MOUSE_BUTTON_RIGHT:
+		_show_menu(event.global_position)
+		accept_event()
+
+
+func _show_menu(global_pos: Vector2) -> void:
+	if _menu == null:
+		_menu = PopupMenu.new()
+		for i in MENU.size():
+			_menu.add_item(MENU[i][0], i)
+		_menu.id_pressed.connect(func(id: int): _apply(MENU[id][1]))
+		add_child(_menu)
+	_menu.reset_size()
+	_menu.position = Vector2i(global_pos)
+	_menu.popup()
+
+
+func _apply(preset: String) -> void:
+	if _main_cam and _main_cam.has_method("apply_view"):
+		_main_cam.apply_view(preset)
 
 
 func _pick_face(local_pos: Vector2) -> void:

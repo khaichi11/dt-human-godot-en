@@ -119,8 +119,8 @@ func apply_view(preset: String) -> void:
 	var p: Array = VIEW_PRESETS[preset]
 	yaw_deg = p[0]
 	pitch_deg = clamp(p[1], min_pitch, max_pitch)
-	target = Vector3(0, 0.30, 0)
-	radius = 1.15 if preset != "iso" else 1.3
+	target = Vector3(0, 0.28, 0)
+	radius = 1.0 if preset != "iso" else 1.2   # jarak nyaman: tak terlalu zoom/jauh
 	_update_transform()
 
 

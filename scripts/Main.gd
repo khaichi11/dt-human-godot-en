@@ -387,36 +387,18 @@ func _build_viewport_header() -> Control:
 	lbl.add_theme_color_override("font_color", COL_MUTED)
 	hb.add_child(lbl)
 
-	# Tombol preset kamera
-	for preset in [["Depan", "depan"], ["Blkg", "belakang"], ["Kiri", "kiri"],
-			["Kanan", "kanan"], ["Atas", "atas"], ["Bawah", "bawah"], ["Iso", "iso"]]:
-		hb.add_child(_make_view_btn(preset[0], preset[1]))
-
 	var sep := Control.new()
 	sep.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hb.add_child(sep)
 
+	# Navigasi kamera lewat ViewCube (pojok kanan atas): klik sisi = pindah,
+	# dobel-klik = hadap depan, klik-kanan = menu (termasuk isometrik).
 	var hint := Label.new()
-	hint.text = "Klik servo / pilih di panel · drag = putar (detent) · drag kosong = orbit  "
+	hint.text = "Klik servo / pilih di panel · drag = putar · kubus = pindah pandangan  "
 	hint.add_theme_color_override("font_color", COL_MUTED)
 	hb.add_child(hint)
 
 	return hb
-
-
-func _make_view_btn(text: String, preset: String) -> Button:
-	var b := Button.new()
-	b.text = text
-	b.focus_mode = Control.FOCUS_NONE
-	b.add_theme_font_size_override("font_size", 11)
-	b.custom_minimum_size = Vector2(46, 24)
-	b.pressed.connect(_set_view.bind(preset))
-	return b
-
-
-func _set_view(preset: String) -> void:
-	if orbit_camera and orbit_camera.has_method("apply_view"):
-		orbit_camera.apply_view(preset)
 
 
 # ----------------------------------------------------------------------------
