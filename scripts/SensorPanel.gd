@@ -496,12 +496,13 @@ func _build_joints_section() -> PanelContainer:
 		row.add_theme_constant_override("separation", 6)
 		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 
-		# Nama (tombol untuk memilih joint)
+		# Nama + ID servo (tombol untuk memilih joint)
+		var sid := i + 1                       # ID Dynamixel = urutan 1..20
 		var name_btn := Button.new()
-		name_btn.text = jname
+		name_btn.text = "%02d  %s" % [sid, jname]
 		name_btn.flat = true
 		name_btn.focus_mode = Control.FOCUS_NONE
-		name_btn.custom_minimum_size = Vector2(86, 0)
+		name_btn.custom_minimum_size = Vector2(118, 0)
 		name_btn.add_theme_font_size_override("font_size", 11)
 		name_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		name_btn.add_theme_color_override("font_color", Color(0.20, 0.23, 0.28))
@@ -558,6 +559,12 @@ func bind_controls(robot: Node3D, manipulator: Node) -> void:
 			sl.value = rad_to_deg(robot.get_joint_angle(jname))
 			sl.tooltip_text = "%s: %.0f° … %.0f°" % [jname, sl.min_value, sl.max_value]
 		_updating_ui = false
+
+	# Tooltip nama joint: model servo + ID Dynamixel + bagian tubuh
+	if robot and robot.has_method("get_servo_id"):
+		for jname in joint_name_btns:
+			joint_name_btns[jname].tooltip_text = "Dynamixel %s · ID %d · %s" % [
+				robot.SERVO_MODEL, robot.get_servo_id(jname), robot.get_servo_part(jname)]
 
 
 # Mode Atur (true): slider aktif. Mode Live (false): slider mati, panel hanya

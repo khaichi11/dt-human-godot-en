@@ -184,9 +184,19 @@ func _find_mesh(node: Node) -> Mesh:
 
 
 # ============================================================================
-# Letakkan robot di lantai: geser model_root agar titik terendah pada y=0
+# Grounding: jaga titik terendah robot selalu di lantai (y=0). Dipanggil tiap
+# frame sehingga saat pose berubah (jongkok, push-up, gerakin joint) robot
+# tetap menapak — mengikuti "gravitasi" visual, tidak melayang/menembus.
 # ============================================================================
+func _process(_delta: float) -> void:
+	_ground_to_floor()
+
+
 func _stand_on_floor() -> void:
+	_ground_to_floor()
+
+
+func _ground_to_floor() -> void:
 	var aabb := _combined_aabb(model_root, global_transform.affine_inverse())
 	if aabb.size == Vector3.ZERO:
 		return
@@ -236,6 +246,32 @@ func get_joint_limit(joint_name: String) -> Vector2:
 		var l: Array = LIMITS_DEG[joint_name]
 		return Vector2(deg_to_rad(l[0]), deg_to_rad(l[1]))
 	return Vector2(-PI * 0.9, PI * 0.9)
+
+
+# ============================================================================
+# METADATA SERVO — ID Dynamixel & bagian tubuh (sumber: op3_manager / DT-Human).
+# Semua servo OP3 = Dynamixel XM-430-W350 (Protocol 2.0).
+# ============================================================================
+const SERVO_ID := {
+	"r_sho_pitch": 1,  "l_sho_pitch": 2,  "r_sho_roll": 3,  "l_sho_roll": 4,
+	"r_el": 5,         "l_el": 6,         "r_hip_yaw": 7,   "l_hip_yaw": 8,
+	"r_hip_roll": 9,   "l_hip_roll": 10,  "r_hip_pitch": 11,"l_hip_pitch": 12,
+	"r_knee": 13,      "l_knee": 14,      "r_ank_pitch": 15,"l_ank_pitch": 16,
+	"r_ank_roll": 17,  "l_ank_roll": 18,  "head_pan": 19,   "head_tilt": 20,
+}
+const SERVO_MODEL := "XM-430-W350"
+
+
+func get_servo_id(joint_name: String) -> int:
+	return SERVO_ID.get(joint_name, 0)
+
+
+func get_servo_part(joint_name: String) -> String:
+	if joint_name.begins_with("head"):
+		return "Kepala"
+	if "sho" in joint_name or joint_name.ends_with("_el"):
+		return "Lengan " + ("Kanan" if joint_name.begins_with("r") else "Kiri")
+	return "Kaki " + ("Kanan" if joint_name.begins_with("r") else "Kiri")
 
 
 # ============================================================================
