@@ -12,14 +12,22 @@ const JointManipScript  = preload("res://scripts/JointManipulator.gd")
 const ViewCubeScript    = preload("res://scripts/ViewCube.gd")
 const RosBridgeScript   = preload("res://scripts/RosBridge.gd")
 
-# --- Palet UI putih minimalis (dipakai bersama SensorPanel) -----------------
-const COL_BG       := Color(0.95, 0.96, 0.97)   # latar app
+# --- Palet pastel (dipakai bersama SensorPanel) -----------------------------
+const COL_BG       := Color(0.95, 0.94, 0.98)   # lavender-white
 const COL_PANEL    := Color(1.0, 1.0, 1.0)      # kartu/panel
-const COL_BORDER   := Color(0.86, 0.88, 0.91)
-const COL_TEXT     := Color(0.13, 0.15, 0.18)   # teks utama
-const COL_MUTED    := Color(0.45, 0.49, 0.55)   # teks sekunder
-const COL_ACCENT   := Color(0.13, 0.45, 0.95)   # aksen biru
-const COL_VIEW_BG  := Color(0.90, 0.92, 0.94)   # latar viewport 3D
+const COL_BORDER   := Color(0.91, 0.89, 0.95)
+const COL_TEXT     := Color(0.22, 0.20, 0.32)   # slate keunguan
+const COL_MUTED    := Color(0.53, 0.51, 0.63)   # teks sekunder
+const COL_ACCENT   := Color(0.55, 0.45, 0.86)   # pastel ungu (aksen utama)
+const COL_VIEW_BG  := Color(0.92, 0.91, 0.96)   # latar viewport 3D
+
+# Aksen pastel per-seksi (badge ikon)
+const PAS_PURPLE := Color(0.62, 0.52, 0.92)
+const PAS_MINT   := Color(0.42, 0.70, 0.60)
+const PAS_SKY    := Color(0.46, 0.71, 0.94)
+const PAS_PEACH  := Color(0.98, 0.68, 0.58)
+const PAS_AMBER  := Color(0.97, 0.80, 0.46)
+const PAS_PINK   := Color(0.93, 0.58, 0.78)
 
 var sensor_panel: Control
 var robot: Node3D
@@ -39,6 +47,61 @@ var _live_connected := false   # true bila data joint asli sedang masuk
 func _ready() -> void:
 	_apply_dark_theme()
 	_build_layout()
+	_show_loading()
+
+
+# ----------------------------------------------------------------------------
+# LOADING / LANDING — splash singkat saat start. App tetap jalan offline
+# (tanpa robot); koneksi bisa dilakukan kapan saja lewat toolbar.
+# ----------------------------------------------------------------------------
+func _show_loading() -> void:
+	var ov := ColorRect.new()
+	ov.color = COL_BG
+	ov.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ov.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(ov)
+
+	var box := VBoxContainer.new()
+	box.set_anchors_preset(Control.PRESET_CENTER)
+	box.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_theme_constant_override("separation", 10)
+	ov.add_child(box)
+
+	var logo := Panel.new()
+	logo.custom_minimum_size = Vector2(64, 64)
+	var lsb := _rounded(COL_ACCENT, 18)
+	logo.add_theme_stylebox_override("panel", lsb)
+	var logo_wrap := CenterContainer.new()
+	logo_wrap.add_child(logo)
+	box.add_child(logo_wrap)
+
+	var title := Label.new()
+	title.text = "OP3 DIGITAL TWIN"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 22)
+	title.add_theme_color_override("font_color", COL_TEXT)
+	if font_bold:
+		title.add_theme_font_override("font", font_bold)
+	box.add_child(title)
+
+	var sub := Label.new()
+	sub.text = "Memuat… · mode offline, hubungkan robot kapan saja"
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sub.add_theme_color_override("font_color", COL_MUTED)
+	box.add_child(sub)
+
+	var bar := ProgressBar.new()
+	bar.custom_minimum_size = Vector2(220, 6)
+	bar.show_percentage = false
+	bar.value = 0
+	box.add_child(bar)
+
+	# animasi bar lalu fade-out
+	var tw := create_tween()
+	tw.tween_property(bar, "value", 100.0, 0.9)
+	tw.tween_interval(0.2)
+	tw.tween_property(ov, "modulate:a", 0.0, 0.4)
+	tw.tween_callback(ov.queue_free)
 
 
 # ----------------------------------------------------------------------------
@@ -59,15 +122,18 @@ func _apply_dark_theme() -> void:
 		font_bold.base_font = inter
 		font_bold.variation_opentype = {"wght": 600}
 
-	# Panel/kartu putih dengan border halus
-	var panel_sb := _rounded(COL_PANEL, 8)
+	# Panel/kartu putih dengan border halus + soft shadow pastel
+	var panel_sb := _rounded(COL_PANEL, 14)
 	panel_sb.border_width_left = 1
 	panel_sb.border_width_right = 1
 	panel_sb.border_width_top = 1
 	panel_sb.border_width_bottom = 1
 	panel_sb.border_color = COL_BORDER
+	panel_sb.shadow_color = Color(0.55, 0.50, 0.70, 0.13)
+	panel_sb.shadow_size = 7
+	panel_sb.shadow_offset = Vector2(0, 3)
 	t.set_stylebox("panel", "PanelContainer", panel_sb)
-	t.set_stylebox("panel", "Panel", _rounded(COL_PANEL, 8))
+	t.set_stylebox("panel", "Panel", _rounded(COL_PANEL, 14))
 
 	t.set_color("font_color", "Label", COL_TEXT)
 
@@ -76,18 +142,22 @@ func _apply_dark_theme() -> void:
 	t.set_stylebox("fill", "ProgressBar", _rounded(COL_ACCENT, 4))
 	t.set_color("font_color", "ProgressBar", COL_TEXT)
 
-	# Tombol (flat minimalis)
-	var btn_n := _rounded(Color(0.97, 0.98, 0.99), 6)
+	# Tombol (pill pastel)
+	var btn_n := _rounded(Color(0.97, 0.96, 0.99), 9)
 	btn_n.border_width_bottom = 1; btn_n.border_width_top = 1
 	btn_n.border_width_left = 1; btn_n.border_width_right = 1
 	btn_n.border_color = COL_BORDER
-	var btn_h := _rounded(Color(0.93, 0.95, 0.98), 6)
-	var btn_p := _rounded(Color(0.86, 0.91, 0.99), 6)
+	var btn_h := _rounded(Color(0.93, 0.91, 0.99), 9)
+	btn_h.border_width_bottom = 1; btn_h.border_width_top = 1
+	btn_h.border_width_left = 1; btn_h.border_width_right = 1
+	btn_h.border_color = COL_ACCENT
+	var btn_p := _rounded(Color(0.88, 0.84, 0.98), 9)
 	t.set_stylebox("normal", "Button", btn_n)
 	t.set_stylebox("hover", "Button", btn_h)
 	t.set_stylebox("pressed", "Button", btn_p)
 	t.set_color("font_color", "Button", COL_TEXT)
 	t.set_color("font_hover_color", "Button", COL_ACCENT)
+	t.set_color("font_pressed_color", "Button", COL_ACCENT)
 
 	# LineEdit
 	var le := _rounded(Color(0.98, 0.99, 1.0), 5)
@@ -303,7 +373,7 @@ func _refresh_mode_btn() -> void:
 		mode_btn.add_theme_color_override("font_color", COL_ACCENT)
 	else:
 		mode_btn.text = "● MODE: LIVE"
-		mode_btn.add_theme_color_override("font_color", Color(0.0, 0.62, 0.35))
+		mode_btn.add_theme_color_override("font_color", Color(0.16, 0.56, 0.47))
 
 
 # ----------------------------------------------------------------------------
@@ -335,7 +405,7 @@ func _on_ros_connect() -> void:
 func _on_ros_status(state: String) -> void:
 	match state:
 		"connecting": _set_ros_dot(Color(0.95, 0.70, 0.20))   # kuning
-		"open":       _set_ros_dot(Color(0.0, 0.72, 0.40))     # hijau
+		"open":       _set_ros_dot(Color(0.16, 0.56, 0.47))     # hijau
 		"closed":
 			_set_ros_dot(Color(0.90, 0.30, 0.30))              # merah
 			_live_connected = false
@@ -350,11 +420,20 @@ func _on_ros_joints(joints: Dictionary) -> void:
 		robot.set_joint_angle(jname, joints[jname])
 
 
+func _on_ros_health(health: Dictionary) -> void:
+	# Status servo dari robot -> kedipkan link yang bermasalah + tandai di panel
+	if robot:
+		for jname in health:
+			robot.set_servo_health(jname, health[jname])
+	if sensor_panel and sensor_panel.has_method("set_servo_health"):
+		sensor_panel.set_servo_health(health)
+
+
 func _make_status_dot() -> Control:
 	var dot := Panel.new()
 	dot.custom_minimum_size = Vector2(12, 12)
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.0, 0.95, 0.5)
+	sb.bg_color = Color(0.32, 0.66, 0.56)
 	sb.corner_radius_top_left = 6
 	sb.corner_radius_top_right = 6
 	sb.corner_radius_bottom_left = 6
@@ -372,51 +451,42 @@ func _build_viewport_header() -> Control:
 	lbl.add_theme_color_override("font_color", COL_MUTED)
 	hb.add_child(lbl)
 
-	# Tombol preset kamera
-	for preset in [["Depan", "depan"], ["Blkg", "belakang"], ["Kiri", "kiri"],
-			["Kanan", "kanan"], ["Atas", "atas"], ["Bawah", "bawah"], ["Iso", "iso"]]:
-		hb.add_child(_make_view_btn(preset[0], preset[1]))
-
 	var sep := Control.new()
 	sep.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	hb.add_child(sep)
 
+	# Navigasi kamera lewat ViewCube (pojok kanan atas): klik sisi = pindah,
+	# dobel-klik = hadap depan, klik-kanan = menu (termasuk isometrik).
 	var hint := Label.new()
-	hint.text = "Klik servo / pilih di panel · drag = putar (detent) · drag kosong = orbit  "
+	hint.text = "Klik servo / pilih di panel · drag = putar · kubus = pindah pandangan  "
 	hint.add_theme_color_override("font_color", COL_MUTED)
 	hb.add_child(hint)
 
 	return hb
 
 
-func _make_view_btn(text: String, preset: String) -> Button:
-	var b := Button.new()
-	b.text = text
-	b.focus_mode = Control.FOCUS_NONE
-	b.add_theme_font_size_override("font_size", 11)
-	b.custom_minimum_size = Vector2(46, 24)
-	b.pressed.connect(_set_view.bind(preset))
-	return b
-
-
-func _set_view(preset: String) -> void:
-	if orbit_camera and orbit_camera.has_method("apply_view"):
-		orbit_camera.apply_view(preset)
-
-
 # ----------------------------------------------------------------------------
 # 3D SCENE
 # ----------------------------------------------------------------------------
 func _build_3d_scene() -> void:
-	# World environment — terang & netral, robot jelas dari segala sudut
+	# World environment — sky lembut pastel untuk refleksi metal + ambient merata
+	var sky_mat := ProceduralSkyMaterial.new()
+	sky_mat.sky_top_color = Color(0.93, 0.92, 0.97)
+	sky_mat.sky_horizon_color = Color(0.88, 0.90, 0.95)
+	sky_mat.ground_horizon_color = Color(0.86, 0.88, 0.93)
+	sky_mat.ground_bottom_color = Color(0.80, 0.82, 0.88)
+	sky_mat.sky_energy_multiplier = 1.0
+	var sky := Sky.new()
+	sky.sky_material = sky_mat
+
 	var env := Environment.new()
-	env.background_mode = Environment.BG_COLOR
-	env.background_color = COL_VIEW_BG
-	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.70, 0.74, 0.80)
-	env.ambient_light_energy = 0.45            # ambient lembut (tanpa over-expose)
+	env.background_mode = Environment.BG_SKY
+	env.sky = sky
+	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
+	env.ambient_light_energy = 0.9
+	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY  # metal memantulkan sky
 	env.ssao_enabled = true
-	env.ssao_intensity = 1.0
+	env.ssao_intensity = 0.8
 	env.ssao_radius = 0.05
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 
@@ -424,11 +494,11 @@ func _build_3d_scene() -> void:
 	world_env.environment = env
 	sub_viewport.add_child(world_env)
 
-	# Pencahayaan 4 arah lembut supaya robot terbaca dari sudut manapun
-	_add_dir_light(Vector3(-50, -30, 0), 1.0, Color(1, 1, 1), true)     # key (atas-kiri)
-	_add_dir_light(Vector3(-35, 130, 0), 0.5, Color(0.9, 0.95, 1.0))    # fill belakang
-	_add_dir_light(Vector3(-25, 60, 0),  0.35, Color(1, 1, 1))          # fill kanan
-	_add_dir_light(Vector3(40, 10, 0),   0.25, Color(0.95, 0.97, 1.0))  # bawah (isi bayangan)
+	# Pencahayaan: key + fill supaya highlight metal jelas dari segala sudut
+	_add_dir_light(Vector3(-50, -30, 0), 1.1, Color(1.0, 0.99, 0.96), true)  # key hangat
+	_add_dir_light(Vector3(-30, 120, 0), 0.45, Color(0.9, 0.94, 1.0))        # fill dingin
+	_add_dir_light(Vector3(-20, 55, 0),  0.35, Color(1, 1, 1))               # fill kanan
+	_add_dir_light(Vector3(45, 10, 0),   0.2, Color(0.95, 0.97, 1.0))        # bawah
 
 	# Lantai grid
 	var floor := _make_floor()
@@ -462,6 +532,7 @@ func _build_3d_scene() -> void:
 	add_child(ros_bridge)
 	ros_bridge.status_changed.connect(_on_ros_status)
 	ros_bridge.joints_received.connect(_on_ros_joints)
+	ros_bridge.health_received.connect(_on_ros_health)
 
 
 func _add_dir_light(rot_deg: Vector3, energy: float, color: Color, shadow := false) -> void:

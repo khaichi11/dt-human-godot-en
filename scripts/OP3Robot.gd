@@ -33,7 +33,7 @@ const ROS_TO_GODOT := Basis(
 # Material rangka OP3 — matte (aluminium/plastik abu-abu). Sengaja TIDAK
 # mengkilap: metallic tinggi membuat tiap riak normal memantul tajam sehingga
 # permukaan rata terlihat "penyok". OP3 asli juga matte.
-const COL_FRAME := Color(0.40, 0.43, 0.49)   # abu gelap (anodized) = kontras di latar terang
+const COL_FRAME := Color(0.10, 0.10, 0.12)   # hitam anodized (seperti OP3 asli)
 
 # --- Storage ---------------------------------------------------------------
 # joint_name -> {"node": Node3D, "axis": Vector3 (sumbu rotasi lokal, frame ROS)}
@@ -45,13 +45,19 @@ var _links: Dictionary = {}
 
 var model_root: Node3D
 var _frame_mat: StandardMaterial3D
+var _link_mats := {}            # joint_name -> StandardMaterial3D (per-link)
+var _health := {}               # joint_name -> "ok" | "warn" | "fault"
 
 
 func _ready() -> void:
 	_frame_mat = StandardMaterial3D.new()
 	_frame_mat.albedo_color = COL_FRAME
-	_frame_mat.metallic = 0.45
-	_frame_mat.roughness = 0.42
+	_frame_mat.metallic = 0.65           # aluminium anodized hitam (mengkilap halus)
+	_frame_mat.roughness = 0.40
+	_frame_mat.metallic_specular = 0.55
+	_frame_mat.rim_enabled = true        # rim halus mempertegas tepi/bentuk
+	_frame_mat.rim = 0.3
+	_frame_mat.rim_tint = 0.5
 
 	model_root = Node3D.new()
 	model_root.name = "ModelRoot"
@@ -139,7 +145,13 @@ func _attach_mesh(parent: Node3D, mesh_basename: String, joint_name: String) -> 
 	var mi := MeshInstance3D.new()
 	mi.name = mesh_basename
 	mi.mesh = mesh
-	mi.material_override = _frame_mat
+	# Tiap link punya material sendiri agar bisa diberi warna health terpisah
+	if joint_name != "":
+		var lm := _frame_mat.duplicate()
+		mi.material_override = lm
+		_link_mats[joint_name] = lm
+	else:
+		mi.material_override = _frame_mat
 	parent.add_child(mi)
 
 	# Collision (convex) supaya link bisa diklik di 3D untuk memilih jointnya
@@ -188,8 +200,86 @@ func _find_mesh(node: Node) -> Mesh:
 # frame sehingga saat pose berubah (jongkok, push-up, gerakin joint) robot
 # tetap menapak — mengikuti "gravitasi" visual, tidak melayang/menembus.
 # ============================================================================
+var _walking := false
+
 func _process(_delta: float) -> void:
+	if _walking:
+		_walk_gait()
 	_ground_to_floor()
+	_blink_health()
+
+
+# ============================================================================
+# JALAN DI TEMPAT — gait sinusoidal ringan (kaki mengayun, base diam).
+# Tanpa lokalisasi, robot tak translasi; ini representasi visual walking.
+# ============================================================================
+func set_walking(on: bool) -> void:
+	_walking = on
+	if not on:
+		_apply_default_pose()
+
+
+func is_walking() -> bool:
+	return _walking
+
+
+func _walk_gait() -> void:
+	var t := Time.get_ticks_msec() / 1000.0
+	var sw := sin(t * 3.2)
+	var sw2 := sin(t * 3.2 + PI)
+	set_joint_angle("l_hip_pitch", deg_to_rad(-70.0 + sw * 22.0))
+	set_joint_angle("r_hip_pitch", deg_to_rad(70.0 + sw2 * 22.0))
+	set_joint_angle("l_knee", deg_to_rad(142.0 - maxf(0.0, sw) * 35.0))
+	set_joint_angle("r_knee", deg_to_rad(-142.0 + maxf(0.0, sw2) * 35.0))
+	set_joint_angle("l_ank_pitch", deg_to_rad(70.0 - sw * 10.0))
+	set_joint_angle("r_ank_pitch", deg_to_rad(-70.0 - sw2 * 10.0))
+	set_joint_angle("l_sho_pitch", deg_to_rad(-15.0 + sw2 * 22.0))
+	set_joint_angle("r_sho_pitch", deg_to_rad(15.0 + sw * 22.0))
+
+
+# ============================================================================
+# SERVO HEALTH — servo bermasalah membuat link-nya kedip merah <-> hitam.
+# state: "ok" (normal/metal), "warn" (kuning pelan), "fault" (merah kedip).
+# Sumber state: pembaca Dynamixel (hardware_error_status, suhu, overload) via
+# koneksi — lihat RosBridge / topic /dt/servo_health.
+# ============================================================================
+func set_servo_health(joint_name: String, state: String) -> void:
+	if not _link_mats.has(joint_name):
+		return
+	_health[joint_name] = state
+	if state == "ok":
+		var m: StandardMaterial3D = _link_mats[joint_name]
+		m.albedo_color = COL_FRAME
+		m.metallic = 0.65
+		m.emission_enabled = false
+
+
+func get_servo_health(joint_name: String) -> String:
+	return _health.get(joint_name, "ok")
+
+
+func _blink_health() -> void:
+	if _health.is_empty():
+		return
+	var t := Time.get_ticks_msec() / 1000.0
+	for jname in _health:
+		var state: String = _health[jname]
+		if state == "ok":
+			continue
+		var m: StandardMaterial3D = _link_mats.get(jname)
+		if m == null:
+			continue
+		m.metallic = 0.1
+		m.emission_enabled = true
+		if state == "fault":
+			# merah <-> hitam, kedip cepat
+			var s := (sin(t * 9.0) + 1.0) * 0.5
+			m.albedo_color = Color(0.05, 0.02, 0.02).lerp(Color(0.95, 0.08, 0.08), s)
+			m.emission = Color(0.9, 0.05, 0.05) * s
+		else:   # warn — kuning berkedip pelan
+			var s := (sin(t * 3.0) + 1.0) * 0.5
+			m.albedo_color = Color(0.35, 0.30, 0.05).lerp(Color(0.95, 0.78, 0.15), s)
+			m.emission = Color(0.9, 0.7, 0.1) * s * 0.6
 
 
 func _stand_on_floor() -> void:

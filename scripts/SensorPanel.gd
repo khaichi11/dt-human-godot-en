@@ -23,6 +23,42 @@ const JOINT_NAMES := [
 	"head_pan",     "head_tilt",
 ]
 
+# Grafik garis ringan (inner class — tanpa file baru)
+class Sparkline extends Control:
+	var values := PackedFloat32Array()
+	var cap := 140
+	var line_col := Color(0.55, 0.45, 0.86)
+	var vmin := -180.0
+	var vmax := 180.0
+
+	func push(v: float) -> void:
+		values.append(v)
+		if values.size() > cap:
+			values.remove_at(0)
+		queue_redraw()
+
+	func _draw() -> void:
+		var w := size.x
+		var h := size.y
+		# grid garis tengah + atas/bawah
+		var grid := Color(0.90, 0.88, 0.94)
+		draw_line(Vector2(0, h * 0.5), Vector2(w, h * 0.5), grid, 1.0)
+		draw_line(Vector2(0, h - 1), Vector2(w, h - 1), grid, 1.0)
+		draw_line(Vector2(0, 1), Vector2(w, 1), grid, 1.0)
+		if values.size() < 2:
+			return
+		var pts := PackedVector2Array()
+		for i in values.size():
+			var x := w * float(i) / float(cap - 1)
+			var t := (values[i] - vmin) / (vmax - vmin)
+			var y := h * (1.0 - clampf(t, 0.0, 1.0))
+			pts.append(Vector2(x, y))
+		draw_polyline(pts, line_col, 2.0, true)
+
+
+var graph_spark: Sparkline
+var graph_lbl: Label
+
 # Referensi node yang dibuat dinamis agar bisa di-update tiap frame
 var battery_bar: ProgressBar
 var battery_voltage_lbl: Label
@@ -37,12 +73,23 @@ var joint_angle_lbls := {}  # joint_name => Label
 var joint_temp_lbls := {}   # joint_name => Label (kosong jika tak ditampilkan)
 var joint_sliders := {}     # joint_name => HSlider
 var joint_name_btns := {}   # joint_name => Button
+var joint_health_dots := {} # joint_name => Panel (indikator health)
 
 # Gerakan/pose (diekstrak dari data ROBOTIS) — nama => {hold, steps:[...]}
 var motions_data := {}
 var motion_option: OptionButton
 var play_btn: Button
 var stop_btn: Button
+var _walk_check: CheckButton
+
+# Editor pose/scene — batas seperti ROBOTIS: 7 step/scene, 256 scene tersimpan.
+const MAX_STEPS := 7
+const MAX_SCENES := 256
+const USER_SCENES := "user://op3_scenes.json"
+var _edit_steps: Array = []
+var scene_name_edit: LineEdit
+var step_count_lbl: Label
+var _steps_box: VBoxContainer
 
 # Kontrol: referensi robot 3D + manipulator (di-set Main lewat bind_controls)
 var _robot_ref: Node3D
@@ -94,8 +141,11 @@ func _build() -> void:
 	pad.add_child(col)
 
 	col.add_child(_build_status_header())
+	col.add_child(_build_stat_strip())
 	col.add_child(_build_poses_section())
+	col.add_child(_build_editor_section())
 	col.add_child(_build_battery_section())
+	col.add_child(_build_graph_section())
 	col.add_child(_build_imu_section())
 	col.add_child(_build_joints_section())
 	col.add_child(_build_system_section())
@@ -116,24 +166,90 @@ func _bold_font() -> FontVariation:
 	return _bold_cache
 
 
-func _make_card(title: String) -> VBoxContainer:
+const PAS_PURPLE := Color(0.62, 0.52, 0.92)
+const PAS_MINT   := Color(0.42, 0.70, 0.60)
+const PAS_SKY    := Color(0.46, 0.71, 0.94)
+const PAS_PEACH  := Color(0.98, 0.68, 0.58)
+const PAS_AMBER  := Color(0.97, 0.80, 0.46)
+const PAS_PINK   := Color(0.93, 0.58, 0.78)
+
+
+var stat_batt: Label
+var stat_temp: Label
+var stat_active: Label
+var stat_fps: Label
+
+func _build_stat_strip() -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stat_batt   = _stat_chip(row, "BATERAI", "87%", PAS_MINT)
+	stat_temp   = _stat_chip(row, "SUHU MAX", "38°", PAS_PEACH)
+	stat_active = _stat_chip(row, "JOINT OK", "20/20", PAS_PURPLE)
+	stat_fps    = _stat_chip(row, "FPS", "60", PAS_SKY)
+	return row
+
+
+func _stat_chip(parent: HBoxContainer, caption: String, value: String, accent: Color) -> Label:
+	var p := PanelContainer.new()
+	p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(1, 1, 1)
+	sb.corner_radius_top_left = 12; sb.corner_radius_top_right = 12
+	sb.corner_radius_bottom_left = 12; sb.corner_radius_bottom_right = 12
+	sb.content_margin_left = 10; sb.content_margin_right = 10
+	sb.content_margin_top = 8; sb.content_margin_bottom = 8
+	sb.border_color = Color(0.91, 0.89, 0.95)
+	sb.border_width_left = 1; sb.border_width_right = 1
+	sb.border_width_top = 1; sb.border_width_bottom = 1
+	sb.shadow_color = Color(0.55, 0.50, 0.70, 0.10)
+	sb.shadow_size = 4; sb.shadow_offset = Vector2(0, 2)
+	p.add_theme_stylebox_override("panel", sb)
+
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 2)
+	p.add_child(vb)
+
+	var cap := Label.new()
+	cap.text = caption
+	cap.add_theme_font_size_override("font_size", 9)
+	cap.add_theme_color_override("font_color", Color(0.53, 0.51, 0.63))
+	vb.add_child(cap)
+
+	var val := Label.new()
+	val.text = value
+	val.add_theme_font_size_override("font_size", 17)
+	val.add_theme_color_override("font_color", accent)
+	var bf := _bold_font()
+	if bf:
+		val.add_theme_font_override("font", bf)
+	vb.add_child(val)
+
+	parent.add_child(p)
+	return val
+
+
+func _make_card(title: String, badge := PAS_PURPLE) -> VBoxContainer:
 	var panel := PanelContainer.new()
 	panel.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	var sb := StyleBoxFlat.new()
 	sb.bg_color = Color(1.0, 1.0, 1.0)
-	sb.border_color = Color(0.86, 0.88, 0.91)
+	sb.border_color = Color(0.91, 0.89, 0.95)
 	sb.border_width_left = 1
 	sb.border_width_right = 1
 	sb.border_width_top = 1
 	sb.border_width_bottom = 1
-	sb.corner_radius_top_left = 6
-	sb.corner_radius_top_right = 6
-	sb.corner_radius_bottom_left = 6
-	sb.corner_radius_bottom_right = 6
-	sb.content_margin_left = 12
-	sb.content_margin_right = 12
-	sb.content_margin_top = 10
-	sb.content_margin_bottom = 12
+	sb.corner_radius_top_left = 14
+	sb.corner_radius_top_right = 14
+	sb.corner_radius_bottom_left = 14
+	sb.corner_radius_bottom_right = 14
+	sb.content_margin_left = 14
+	sb.content_margin_right = 14
+	sb.content_margin_top = 12
+	sb.content_margin_bottom = 14
+	sb.shadow_color = Color(0.55, 0.50, 0.70, 0.12)
+	sb.shadow_size = 6
+	sb.shadow_offset = Vector2(0, 3)
 	panel.add_theme_stylebox_override("panel", sb)
 
 	var vb := VBoxContainer.new()
@@ -141,15 +257,24 @@ func _make_card(title: String) -> VBoxContainer:
 	panel.add_child(vb)
 
 	var header := HBoxContainer.new()
-	var bullet := ColorRect.new()
-	bullet.color = Color(0.13, 0.45, 0.95)
-	bullet.custom_minimum_size = Vector2(3, 14)
-	header.add_child(bullet)
+	header.add_theme_constant_override("separation", 8)
+
+	# Badge bulat pastel per-seksi
+	var badge_p := Panel.new()
+	badge_p.custom_minimum_size = Vector2(18, 18)
+	var bsb := StyleBoxFlat.new()
+	bsb.bg_color = badge
+	bsb.corner_radius_top_left = 6
+	bsb.corner_radius_top_right = 6
+	bsb.corner_radius_bottom_left = 6
+	bsb.corner_radius_bottom_right = 6
+	badge_p.add_theme_stylebox_override("panel", bsb)
+	header.add_child(badge_p)
 
 	var title_lbl := Label.new()
-	title_lbl.text = "  " + title.to_upper()
+	title_lbl.text = title.to_upper()
 	title_lbl.add_theme_font_size_override("font_size", 11)
-	title_lbl.add_theme_color_override("font_color", Color(0.45, 0.49, 0.55))
+	title_lbl.add_theme_color_override("font_color", Color(0.40, 0.38, 0.50))
 	var bf := _bold_font()
 	if bf:
 		title_lbl.add_theme_font_override("font", bf)
@@ -182,8 +307,8 @@ func _add_card_to(_parent: Container, _content: VBoxContainer) -> void:
 func _build_status_header() -> PanelContainer:
 	var panel := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.96, 0.97, 0.98)
-	sb.border_color = Color(0.80, 0.85, 0.92)
+	sb.bg_color = Color(0.97, 0.96, 0.99)
+	sb.border_color = Color(0.84, 0.80, 0.93)
 	sb.border_width_left = 1
 	sb.border_width_right = 1
 	sb.border_width_top = 1
@@ -204,7 +329,7 @@ func _build_status_header() -> PanelContainer:
 
 	var line1 := HBoxContainer.new()
 	var dot := ColorRect.new()
-	dot.color = Color(0.0, 0.68, 0.40)
+	dot.color = Color(0.16, 0.56, 0.47)
 	dot.custom_minimum_size = Vector2(8, 8)
 	line1.add_child(dot)
 
@@ -214,7 +339,7 @@ func _build_status_header() -> PanelContainer:
 
 	var name_lbl := Label.new()
 	name_lbl.text = "OP3-001 · ONLINE"
-	name_lbl.add_theme_color_override("font_color", Color(0.0, 0.68, 0.40))
+	name_lbl.add_theme_color_override("font_color", Color(0.16, 0.56, 0.47))
 	name_lbl.add_theme_font_size_override("font_size", 14)
 	line1.add_child(name_lbl)
 	vb.add_child(line1)
@@ -261,7 +386,222 @@ func _build_poses_section() -> PanelContainer:
 	row.add_child(stop_btn)
 
 	content.add_child(row)
+
+	# Toggle jalan di tempat
+	var walk := CheckButton.new()
+	walk.text = "Jalan di Tempat"
+	walk.focus_mode = Control.FOCUS_NONE
+	walk.toggled.connect(_on_walk_toggled)
+	content.add_child(walk)
+	_walk_check = walk
+
 	return content.get_meta("card_panel")
+
+
+func _on_walk_toggled(on: bool) -> void:
+	if _robot_ref and _robot_ref.has_method("set_walking"):
+		_robot_ref.set_walking(on)
+
+
+# ----------------------------------------------------------------------------
+# EDITOR POSE/SCENE — rekam pose robot sbg step (maks 7), simpan jadi scene
+# bernama (maks 256). Tersimpan ke user:// dan muncul di daftar gerakan.
+# ----------------------------------------------------------------------------
+func _build_editor_section() -> PanelContainer:
+	var content := _make_card("Editor Pose / Scene", PAS_PINK)
+
+	scene_name_edit = LineEdit.new()
+	scene_name_edit.placeholder_text = "Nama scene (mis. Scene 1)"
+	scene_name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.add_child(scene_name_edit)
+
+	var btns := HBoxContainer.new()
+	btns.add_theme_constant_override("separation", 6)
+	btns.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var add_btn := Button.new()
+	add_btn.text = "+ Step"
+	add_btn.tooltip_text = "Atur pose robot dulu, lalu rekam sbg step (maks 7)"
+	add_btn.focus_mode = Control.FOCUS_NONE
+	add_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	add_btn.pressed.connect(_on_capture_step)
+	btns.add_child(add_btn)
+
+	var prev_btn := Button.new()
+	prev_btn.text = "▶ Pratinjau"
+	prev_btn.tooltip_text = "Mainkan urutan step yang sudah direkam"
+	prev_btn.focus_mode = Control.FOCUS_NONE
+	prev_btn.pressed.connect(_on_preview_steps)
+	btns.add_child(prev_btn)
+
+	content.add_child(btns)
+
+	step_count_lbl = Label.new()
+	step_count_lbl.add_theme_font_size_override("font_size", 10)
+	step_count_lbl.add_theme_color_override("font_color", Color(0.53, 0.51, 0.63))
+	content.add_child(step_count_lbl)
+
+	# Daftar step yang direkam (Step 1, Step 2, …) — bisa dihapus per-step
+	_steps_box = VBoxContainer.new()
+	_steps_box.add_theme_constant_override("separation", 2)
+	content.add_child(_steps_box)
+
+	var save_row := HBoxContainer.new()
+	save_row.add_theme_constant_override("separation", 6)
+	var save_btn := Button.new()
+	save_btn.text = "Simpan Scene"
+	save_btn.focus_mode = Control.FOCUS_NONE
+	save_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	save_btn.pressed.connect(_on_save_scene)
+	save_row.add_child(save_btn)
+	var load_btn := Button.new()
+	load_btn.text = "Muat"
+	load_btn.tooltip_text = "Muat scene terpilih (di daftar Gerakan) ke editor untuk diubah"
+	load_btn.focus_mode = Control.FOCUS_NONE
+	load_btn.pressed.connect(_on_load_to_editor)
+	save_row.add_child(load_btn)
+	var clr_btn := Button.new()
+	clr_btn.text = "Reset"
+	clr_btn.focus_mode = Control.FOCUS_NONE
+	clr_btn.pressed.connect(_on_clear_scene)
+	save_row.add_child(clr_btn)
+	content.add_child(save_row)
+
+	_update_step_count()
+	_rebuild_step_list()
+	return content.get_meta("card_panel")
+
+
+func _rebuild_step_list() -> void:
+	if _steps_box == null:
+		return
+	for c in _steps_box.get_children():
+		c.queue_free()
+	for i in _edit_steps.size():
+		var r := HBoxContainer.new()
+		r.add_theme_constant_override("separation", 6)
+		var lbl := Label.new()
+		lbl.text = "Step %d  ·  pose terekam" % (i + 1)
+		lbl.add_theme_font_size_override("font_size", 11)
+		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		r.add_child(lbl)
+		var del := Button.new()
+		del.text = "✕"
+		del.focus_mode = Control.FOCUS_NONE
+		del.custom_minimum_size = Vector2(26, 0)
+		del.pressed.connect(_remove_step.bind(i))
+		r.add_child(del)
+		_steps_box.add_child(r)
+
+
+func _remove_step(idx: int) -> void:
+	if idx >= 0 and idx < _edit_steps.size():
+		_edit_steps.remove_at(idx)
+		_update_step_count()
+		_rebuild_step_list()
+
+
+func _on_preview_steps() -> void:
+	if _robot_ref and _robot_ref.has_method("play_motion") and not _edit_steps.is_empty():
+		_robot_ref.play_motion(_edit_steps.duplicate(true), false)
+
+
+func _on_load_to_editor() -> void:
+	# Muat scene terpilih di daftar Gerakan ke editor (untuk diubah step-nya)
+	if motion_option == null:
+		return
+	var nm := motion_option.get_item_text(motion_option.selected)
+	if not motions_data.has(nm):
+		return
+	_edit_steps = motions_data[nm].get("steps", []).duplicate(true)
+	scene_name_edit.text = nm
+	_update_step_count()
+	_rebuild_step_list()
+
+
+func _capture_pose() -> Dictionary:
+	var j := {}
+	if _robot_ref and _robot_ref.has_method("get_joint_angle"):
+		for jn in JOINT_NAMES:
+			j[jn] = round(rad_to_deg(_robot_ref.get_joint_angle(jn)) * 10.0) / 10.0
+	return {"t": 0.6, "p": 0.2, "j": j}
+
+
+func _on_capture_step() -> void:
+	if _edit_steps.size() >= MAX_STEPS:
+		_flash_count("Maks %d step!" % MAX_STEPS)
+		return
+	_edit_steps.append(_capture_pose())
+	_update_step_count()
+	_rebuild_step_list()
+
+
+func _on_clear_scene() -> void:
+	_edit_steps.clear()
+	_update_step_count()
+	_rebuild_step_list()
+
+
+func _on_save_scene() -> void:
+	var nm := scene_name_edit.text.strip_edges()
+	if nm == "" or _edit_steps.is_empty():
+		_flash_count("Isi nama & minimal 1 step")
+		return
+	var user_count := 0
+	for k in motions_data:
+		if motions_data[k].get("user", false):
+			user_count += 1
+	if user_count >= MAX_SCENES and not motions_data.has(nm):
+		_flash_count("Maks %d scene tersimpan" % MAX_SCENES)
+		return
+	motions_data[nm] = {"hold": true, "user": true, "steps": _edit_steps.duplicate(true)}
+	_save_user_scenes()
+	if motion_option:
+		_refresh_motion_options()
+	_edit_steps.clear()
+	_update_step_count()
+	_rebuild_step_list()
+	_flash_count("Tersimpan: %s" % nm)
+
+
+func _refresh_motion_options() -> void:
+	var cur := motion_option.get_item_text(motion_option.selected) if motion_option.item_count > 0 else ""
+	motion_option.clear()
+	for mname in motions_data.keys():
+		motion_option.add_item(mname)
+	for i in motion_option.item_count:
+		if motion_option.get_item_text(i) == cur:
+			motion_option.select(i)
+
+
+func _update_step_count() -> void:
+	if step_count_lbl:
+		step_count_lbl.text = "Step terekam: %d/%d" % [_edit_steps.size(), MAX_STEPS]
+
+
+func _flash_count(msg: String) -> void:
+	if step_count_lbl:
+		step_count_lbl.text = msg
+
+
+func _save_user_scenes() -> void:
+	var out := {}
+	for k in motions_data:
+		if motions_data[k].get("user", false):
+			out[k] = motions_data[k]
+	var f := FileAccess.open(USER_SCENES, FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify(out))
+		f.close()
+
+
+func _load_user_scenes() -> void:
+	if not FileAccess.file_exists(USER_SCENES):
+		return
+	var parsed = JSON.parse_string(FileAccess.get_file_as_string(USER_SCENES))
+	if typeof(parsed) == TYPE_DICTIONARY:
+		for k in parsed:
+			motions_data[k] = parsed[k]
 
 
 func _load_motions() -> void:
@@ -271,6 +611,7 @@ func _load_motions() -> void:
 	var parsed = JSON.parse_string(txt)
 	if typeof(parsed) == TYPE_DICTIONARY:
 		motions_data = parsed
+	_load_user_scenes()    # scene buatan user (user://) ikut muncul di daftar
 
 
 func _on_play() -> void:
@@ -295,8 +636,25 @@ func _on_stop() -> void:
 		_robot_ref.go_default()
 
 
+func _build_graph_section() -> PanelContainer:
+	var content := _make_card("Tren Sudut Joint", PAS_SKY)
+
+	graph_lbl = Label.new()
+	graph_lbl.text = "— (pilih joint)"
+	graph_lbl.add_theme_font_size_override("font_size", 11)
+	graph_lbl.add_theme_color_override("font_color", Color(0.40, 0.38, 0.50))
+	content.add_child(graph_lbl)
+
+	graph_spark = Sparkline.new()
+	graph_spark.custom_minimum_size = Vector2(0, 64)
+	graph_spark.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.add_child(graph_spark)
+
+	return content.get_meta("card_panel")
+
+
 func _build_battery_section() -> PanelContainer:
-	var content := _make_card("Battery · LiPo 3S")
+	var content := _make_card("Battery · LiPo 3S", PAS_MINT)
 
 	# Bar besar
 	battery_bar = ProgressBar.new()
@@ -311,7 +669,7 @@ func _build_battery_section() -> PanelContainer:
 	battery_voltage_lbl = Label.new()
 	battery_voltage_lbl.text = "11.7 V"
 	battery_voltage_lbl.add_theme_font_size_override("font_size", 22)
-	battery_voltage_lbl.add_theme_color_override("font_color", Color(1, 1, 1))
+	battery_voltage_lbl.add_theme_color_override("font_color", Color(0.22, 0.20, 0.32))
 	pct_row.add_child(battery_voltage_lbl)
 
 	var spacer := Control.new()
@@ -321,7 +679,7 @@ func _build_battery_section() -> PanelContainer:
 	battery_status_lbl = Label.new()
 	battery_status_lbl.text = "%.0f%%" % _battery_pct
 	battery_status_lbl.add_theme_font_size_override("font_size", 22)
-	battery_status_lbl.add_theme_color_override("font_color", Color(0.0, 0.60, 0.35))
+	battery_status_lbl.add_theme_color_override("font_color", Color(0.16, 0.56, 0.47))
 	pct_row.add_child(battery_status_lbl)
 	content.add_child(pct_row)
 
@@ -360,13 +718,13 @@ func _add_kv(grid: GridContainer, key: String, value: String) -> Label:
 # 3) IMU SECTION
 # ----------------------------------------------------------------------------
 func _build_imu_section() -> PanelContainer:
-	var content := _make_card("IMU Sensor · MPU-9250")
+	var content := _make_card("IMU Sensor · MPU-9250", PAS_SKY)
 
 	# Tiga sub-grup: Gyro / Accel / Orientation
 	content.add_child(_build_imu_subgroup("Gyroscope (°/s)", imu_gyro_lbls,
-		Color(1.0, 0.45, 0.45), Color(0.0, 0.62, 0.35), Color(0.13, 0.45, 0.95)))
+		Color(1.0, 0.45, 0.45), Color(0.16, 0.56, 0.47), Color(0.55, 0.45, 0.86)))
 	content.add_child(_build_imu_subgroup("Accelerometer (m/s²)", imu_accel_lbls,
-		Color(1.0, 0.45, 0.45), Color(0.0, 0.62, 0.35), Color(0.13, 0.45, 0.95)))
+		Color(1.0, 0.45, 0.45), Color(0.16, 0.56, 0.47), Color(0.55, 0.45, 0.86)))
 	content.add_child(_build_imu_orientation_group())
 
 	return content.get_meta("card_panel")
@@ -461,7 +819,7 @@ func _build_imu_orientation_group() -> Control:
 
 		var lab := Label.new()
 		lab.text = kv[0]
-		lab.add_theme_color_override("font_color", Color(0.13, 0.45, 0.95))
+		lab.add_theme_color_override("font_color", Color(0.55, 0.45, 0.86))
 		lab.add_theme_font_size_override("font_size", 10)
 		inner.add_child(lab)
 
@@ -481,7 +839,7 @@ func _build_imu_orientation_group() -> Control:
 # 4) JOINTS SECTION (20 DOF)
 # ----------------------------------------------------------------------------
 func _build_joints_section() -> PanelContainer:
-	var content := _make_card("Joints · 20 DOF — klik nama / geser slider untuk kontrol")
+	var content := _make_card("Joints · 20 DOF — klik nama, geser slider", PAS_PEACH)
 
 	# Baris-baris joint: [nama (tombol)] [slider] [sudut]
 	var rows := VBoxContainer.new()
@@ -495,6 +853,14 @@ func _build_joints_section() -> PanelContainer:
 		var row := HBoxContainer.new()
 		row.add_theme_constant_override("separation", 6)
 		row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+		# Titik health servo (hijau=ok, kuning=warn, merah=fault)
+		var dot := Panel.new()
+		dot.custom_minimum_size = Vector2(9, 9)
+		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		_set_dot_color(dot, Color(0.42, 0.70, 0.60))
+		joint_health_dots[jname] = dot
+		row.add_child(dot)
 
 		# Nama + ID servo (tombol untuk memilih joint)
 		var sid := i + 1                       # ID Dynamixel = urutan 1..20
@@ -527,7 +893,7 @@ func _build_joints_section() -> PanelContainer:
 		# Nilai sudut
 		var angle_lbl := Label.new()
 		angle_lbl.text = "+0.0°"
-		angle_lbl.add_theme_color_override("font_color", Color(0.13, 0.45, 0.95))
+		angle_lbl.add_theme_color_override("font_color", Color(0.55, 0.45, 0.86))
 		angle_lbl.add_theme_font_size_override("font_size", 11)
 		angle_lbl.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 		angle_lbl.custom_minimum_size = Vector2(48, 0)
@@ -584,6 +950,27 @@ func set_editable(editable: bool) -> void:
 		motion_option.disabled = not editable
 
 
+func _set_dot_color(dot: Panel, c: Color) -> void:
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = c
+	sb.corner_radius_top_left = 5
+	sb.corner_radius_top_right = 5
+	sb.corner_radius_bottom_left = 5
+	sb.corner_radius_bottom_right = 5
+	dot.add_theme_stylebox_override("panel", sb)
+
+
+# Status health servo dari robot (nama_joint -> "ok"|"warn"|"fault")
+func set_servo_health(health: Dictionary) -> void:
+	for jname in health:
+		if not joint_health_dots.has(jname):
+			continue
+		match String(health[jname]):
+			"fault": _set_dot_color(joint_health_dots[jname], Color(0.93, 0.20, 0.20))
+			"warn":  _set_dot_color(joint_health_dots[jname], Color(0.97, 0.75, 0.20))
+			_:       _set_dot_color(joint_health_dots[jname], Color(0.42, 0.70, 0.60))
+
+
 func _on_joint_clicked(jname: String) -> void:
 	if _manip_ref and _manip_ref.has_method("select_joint"):
 		_manip_ref.select_joint(jname)
@@ -616,7 +1003,7 @@ func _highlight_selected(jname: String) -> void:
 		joint_name_btns[_sel_joint].add_theme_color_override("font_color", Color(0.20, 0.23, 0.28))
 	_sel_joint = jname
 	if joint_name_btns.has(jname):
-		joint_name_btns[jname].add_theme_color_override("font_color", Color(0.0, 0.62, 0.35))
+		joint_name_btns[jname].add_theme_color_override("font_color", Color(0.16, 0.56, 0.47))
 
 
 func _make_th(parent: Container, text: String) -> void:
@@ -631,7 +1018,7 @@ func _make_th(parent: Container, text: String) -> void:
 # 5) SYSTEM SECTION
 # ----------------------------------------------------------------------------
 func _build_system_section() -> PanelContainer:
-	var content := _make_card("System")
+	var content := _make_card("System", PAS_AMBER)
 
 	var grid := GridContainer.new()
 	grid.columns = 2
@@ -642,9 +1029,32 @@ func _build_system_section() -> PanelContainer:
 	fps_lbl     = _add_kv(grid, "FPS", "60")
 	latency_lbl = _add_kv(grid, "Latency", "8.2 ms")
 	uptime_lbl  = _add_kv(grid, "Uptime", "00:00:00")
-	_add_kv(grid, "ROS Topic", "/op3/all_joints")
+	_add_kv(grid, "Health topic", "/dt/servo_health")
+
+	var st := Button.new()
+	st.text = "Self-Test Servo"
+	st.focus_mode = Control.FOCUS_NONE
+	st.tooltip_text = "Pratinjau indikator health (simulasi: 1 fault, 1 warn)"
+	st.pressed.connect(_on_self_test)
+	content.add_child(st)
 
 	return content.get_meta("card_panel")
+
+
+func _on_self_test() -> void:
+	# Pratinjau visual health saat belum ada robot. Tandai 1 fault + 1 warn,
+	# lalu kembali normal setelah 5 detik.
+	var demo := {"r_knee": "fault", "l_sho_roll": "warn"}
+	_apply_health_demo(demo)
+	await get_tree().create_timer(5.0).timeout
+	_apply_health_demo({"r_knee": "ok", "l_sho_roll": "ok"})
+
+
+func _apply_health_demo(h: Dictionary) -> void:
+	set_servo_health(h)
+	if _robot_ref and _robot_ref.has_method("set_servo_health"):
+		for jn in h:
+			_robot_ref.set_servo_health(jn, h[jn])
 
 
 # ============================================================================
@@ -666,12 +1076,20 @@ func update_from_robot(robot: Node3D) -> void:
 				elif abs_deg > 30.0:
 					lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
 				else:
-					lbl.add_theme_color_override("font_color", Color(0.13, 0.45, 0.95))
+					lbl.add_theme_color_override("font_color", Color(0.55, 0.45, 0.86))
 				# Slider mengikuti sudut robot (kecuali yang sedang diseret user)
 				if joint_sliders.has(jname) and _active_slider != jname:
 					_updating_ui = true
 					joint_sliders[jname].value = deg
 					_updating_ui = false
+
+	# 1b. Grafik tren joint terpilih (atau r_knee default)
+	if graph_spark:
+		var gj := _sel_joint if _sel_joint != "" else "r_knee"
+		if robot.has_method("get_joint_angle"):
+			graph_spark.push(rad_to_deg(robot.get_joint_angle(gj)))
+			if graph_lbl:
+				graph_lbl.text = "%s  (°)" % gj
 
 	# 2. Mockup IMU (digerakkan dari sin/cos waktu agar kelihatan hidup)
 	var t := Time.get_ticks_msec() / 1000.0
@@ -703,8 +1121,8 @@ func update_from_robot(robot: Node3D) -> void:
 		fill_sb.bg_color = Color(0.95, 0.70, 0.20)
 		battery_status_lbl.add_theme_color_override("font_color", Color(0.95, 0.70, 0.20))
 	else:
-		fill_sb.bg_color = Color(0.0, 0.60, 0.35)
-		battery_status_lbl.add_theme_color_override("font_color", Color(0.0, 0.60, 0.35))
+		fill_sb.bg_color = Color(0.16, 0.56, 0.47)
+		battery_status_lbl.add_theme_color_override("font_color", Color(0.16, 0.56, 0.47))
 	battery_bar.add_theme_stylebox_override("fill", fill_sb)
 
 	# Current draw (sedikit ber-fluktuasi)
@@ -713,6 +1131,20 @@ func update_from_robot(robot: Node3D) -> void:
 	# 4. System info
 	fps_lbl.text = "%d" % Engine.get_frames_per_second()
 	latency_lbl.text = "%.1f ms" % (1000.0 / max(1, Engine.get_frames_per_second()))
+
+	# Stat strip atas
+	if stat_batt:
+		stat_batt.text = "%.0f%%" % _battery_pct
+		stat_fps.text = "%d" % Engine.get_frames_per_second()
+		var ok := 0
+		for jn in JOINT_NAMES:
+			if not _robot_ref or not _robot_ref.has_method("get_servo_health") \
+					or _robot_ref.get_servo_health(jn) == "ok":
+				ok += 1
+		stat_active.text = "%d/20" % ok
+		stat_active.add_theme_color_override("font_color",
+			PAS_PURPLE if ok == 20 else Color(0.93, 0.20, 0.20))
+		stat_temp.text = "%.0f°" % (_temp_base + 6.0)
 	@warning_ignore("integer_division")
 	var elapsed_s := (Time.get_ticks_msec() - _start_time_ms) / 1000
 	@warning_ignore("integer_division")
@@ -733,7 +1165,7 @@ func update_from_robot(robot: Node3D) -> void:
 			elif temp > 45.0:
 				lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
 			else:
-				lbl.add_theme_color_override("font_color", Color(0.0, 0.60, 0.35))
+				lbl.add_theme_color_override("font_color", Color(0.16, 0.56, 0.47))
 
 
 # Helper konversi (Godot punya rad_to_deg di 4.x, tapi kita pakai versi manual
