@@ -47,6 +47,61 @@ var _live_connected := false   # true bila data joint asli sedang masuk
 func _ready() -> void:
 	_apply_dark_theme()
 	_build_layout()
+	_show_loading()
+
+
+# ----------------------------------------------------------------------------
+# LOADING / LANDING — splash singkat saat start. App tetap jalan offline
+# (tanpa robot); koneksi bisa dilakukan kapan saja lewat toolbar.
+# ----------------------------------------------------------------------------
+func _show_loading() -> void:
+	var ov := ColorRect.new()
+	ov.color = COL_BG
+	ov.set_anchors_preset(Control.PRESET_FULL_RECT)
+	ov.mouse_filter = Control.MOUSE_FILTER_STOP
+	add_child(ov)
+
+	var box := VBoxContainer.new()
+	box.set_anchors_preset(Control.PRESET_CENTER)
+	box.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.add_theme_constant_override("separation", 10)
+	ov.add_child(box)
+
+	var logo := Panel.new()
+	logo.custom_minimum_size = Vector2(64, 64)
+	var lsb := _rounded(COL_ACCENT, 18)
+	logo.add_theme_stylebox_override("panel", lsb)
+	var logo_wrap := CenterContainer.new()
+	logo_wrap.add_child(logo)
+	box.add_child(logo_wrap)
+
+	var title := Label.new()
+	title.text = "OP3 DIGITAL TWIN"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	title.add_theme_font_size_override("font_size", 22)
+	title.add_theme_color_override("font_color", COL_TEXT)
+	if font_bold:
+		title.add_theme_font_override("font", font_bold)
+	box.add_child(title)
+
+	var sub := Label.new()
+	sub.text = "Memuat… · mode offline, hubungkan robot kapan saja"
+	sub.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	sub.add_theme_color_override("font_color", COL_MUTED)
+	box.add_child(sub)
+
+	var bar := ProgressBar.new()
+	bar.custom_minimum_size = Vector2(220, 6)
+	bar.show_percentage = false
+	bar.value = 0
+	box.add_child(bar)
+
+	# animasi bar lalu fade-out
+	var tw := create_tween()
+	tw.tween_property(bar, "value", 100.0, 0.9)
+	tw.tween_interval(0.2)
+	tw.tween_property(ov, "modulate:a", 0.0, 0.4)
+	tw.tween_callback(ov.queue_free)
 
 
 # ----------------------------------------------------------------------------

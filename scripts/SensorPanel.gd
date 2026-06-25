@@ -80,6 +80,16 @@ var motions_data := {}
 var motion_option: OptionButton
 var play_btn: Button
 var stop_btn: Button
+var _walk_check: CheckButton
+
+# Editor pose/scene — batas seperti ROBOTIS: 7 step/scene, 256 scene tersimpan.
+const MAX_STEPS := 7
+const MAX_SCENES := 256
+const USER_SCENES := "user://op3_scenes.json"
+var _edit_steps: Array = []
+var scene_name_edit: LineEdit
+var step_count_lbl: Label
+var _steps_box: VBoxContainer
 
 # Kontrol: referensi robot 3D + manipulator (di-set Main lewat bind_controls)
 var _robot_ref: Node3D
@@ -131,7 +141,9 @@ func _build() -> void:
 	pad.add_child(col)
 
 	col.add_child(_build_status_header())
+	col.add_child(_build_stat_strip())
 	col.add_child(_build_poses_section())
+	col.add_child(_build_editor_section())
 	col.add_child(_build_battery_section())
 	col.add_child(_build_graph_section())
 	col.add_child(_build_imu_section())
@@ -159,6 +171,62 @@ const PAS_MINT   := Color(0.42, 0.70, 0.60)
 const PAS_SKY    := Color(0.46, 0.71, 0.94)
 const PAS_PEACH  := Color(0.98, 0.68, 0.58)
 const PAS_AMBER  := Color(0.97, 0.80, 0.46)
+const PAS_PINK   := Color(0.93, 0.58, 0.78)
+
+
+var stat_batt: Label
+var stat_temp: Label
+var stat_active: Label
+var stat_fps: Label
+
+func _build_stat_strip() -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	row.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stat_batt   = _stat_chip(row, "BATERAI", "87%", PAS_MINT)
+	stat_temp   = _stat_chip(row, "SUHU MAX", "38°", PAS_PEACH)
+	stat_active = _stat_chip(row, "JOINT OK", "20/20", PAS_PURPLE)
+	stat_fps    = _stat_chip(row, "FPS", "60", PAS_SKY)
+	return row
+
+
+func _stat_chip(parent: HBoxContainer, caption: String, value: String, accent: Color) -> Label:
+	var p := PanelContainer.new()
+	p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(1, 1, 1)
+	sb.corner_radius_top_left = 12; sb.corner_radius_top_right = 12
+	sb.corner_radius_bottom_left = 12; sb.corner_radius_bottom_right = 12
+	sb.content_margin_left = 10; sb.content_margin_right = 10
+	sb.content_margin_top = 8; sb.content_margin_bottom = 8
+	sb.border_color = Color(0.91, 0.89, 0.95)
+	sb.border_width_left = 1; sb.border_width_right = 1
+	sb.border_width_top = 1; sb.border_width_bottom = 1
+	sb.shadow_color = Color(0.55, 0.50, 0.70, 0.10)
+	sb.shadow_size = 4; sb.shadow_offset = Vector2(0, 2)
+	p.add_theme_stylebox_override("panel", sb)
+
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 2)
+	p.add_child(vb)
+
+	var cap := Label.new()
+	cap.text = caption
+	cap.add_theme_font_size_override("font_size", 9)
+	cap.add_theme_color_override("font_color", Color(0.53, 0.51, 0.63))
+	vb.add_child(cap)
+
+	var val := Label.new()
+	val.text = value
+	val.add_theme_font_size_override("font_size", 17)
+	val.add_theme_color_override("font_color", accent)
+	var bf := _bold_font()
+	if bf:
+		val.add_theme_font_override("font", bf)
+	vb.add_child(val)
+
+	parent.add_child(p)
+	return val
 
 
 func _make_card(title: String, badge := PAS_PURPLE) -> VBoxContainer:
@@ -318,7 +386,222 @@ func _build_poses_section() -> PanelContainer:
 	row.add_child(stop_btn)
 
 	content.add_child(row)
+
+	# Toggle jalan di tempat
+	var walk := CheckButton.new()
+	walk.text = "Jalan di Tempat"
+	walk.focus_mode = Control.FOCUS_NONE
+	walk.toggled.connect(_on_walk_toggled)
+	content.add_child(walk)
+	_walk_check = walk
+
 	return content.get_meta("card_panel")
+
+
+func _on_walk_toggled(on: bool) -> void:
+	if _robot_ref and _robot_ref.has_method("set_walking"):
+		_robot_ref.set_walking(on)
+
+
+# ----------------------------------------------------------------------------
+# EDITOR POSE/SCENE — rekam pose robot sbg step (maks 7), simpan jadi scene
+# bernama (maks 256). Tersimpan ke user:// dan muncul di daftar gerakan.
+# ----------------------------------------------------------------------------
+func _build_editor_section() -> PanelContainer:
+	var content := _make_card("Editor Pose / Scene", PAS_PINK)
+
+	scene_name_edit = LineEdit.new()
+	scene_name_edit.placeholder_text = "Nama scene (mis. Scene 1)"
+	scene_name_edit.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	content.add_child(scene_name_edit)
+
+	var btns := HBoxContainer.new()
+	btns.add_theme_constant_override("separation", 6)
+	btns.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+
+	var add_btn := Button.new()
+	add_btn.text = "+ Step"
+	add_btn.tooltip_text = "Atur pose robot dulu, lalu rekam sbg step (maks 7)"
+	add_btn.focus_mode = Control.FOCUS_NONE
+	add_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	add_btn.pressed.connect(_on_capture_step)
+	btns.add_child(add_btn)
+
+	var prev_btn := Button.new()
+	prev_btn.text = "▶ Pratinjau"
+	prev_btn.tooltip_text = "Mainkan urutan step yang sudah direkam"
+	prev_btn.focus_mode = Control.FOCUS_NONE
+	prev_btn.pressed.connect(_on_preview_steps)
+	btns.add_child(prev_btn)
+
+	content.add_child(btns)
+
+	step_count_lbl = Label.new()
+	step_count_lbl.add_theme_font_size_override("font_size", 10)
+	step_count_lbl.add_theme_color_override("font_color", Color(0.53, 0.51, 0.63))
+	content.add_child(step_count_lbl)
+
+	# Daftar step yang direkam (Step 1, Step 2, …) — bisa dihapus per-step
+	_steps_box = VBoxContainer.new()
+	_steps_box.add_theme_constant_override("separation", 2)
+	content.add_child(_steps_box)
+
+	var save_row := HBoxContainer.new()
+	save_row.add_theme_constant_override("separation", 6)
+	var save_btn := Button.new()
+	save_btn.text = "Simpan Scene"
+	save_btn.focus_mode = Control.FOCUS_NONE
+	save_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	save_btn.pressed.connect(_on_save_scene)
+	save_row.add_child(save_btn)
+	var load_btn := Button.new()
+	load_btn.text = "Muat"
+	load_btn.tooltip_text = "Muat scene terpilih (di daftar Gerakan) ke editor untuk diubah"
+	load_btn.focus_mode = Control.FOCUS_NONE
+	load_btn.pressed.connect(_on_load_to_editor)
+	save_row.add_child(load_btn)
+	var clr_btn := Button.new()
+	clr_btn.text = "Reset"
+	clr_btn.focus_mode = Control.FOCUS_NONE
+	clr_btn.pressed.connect(_on_clear_scene)
+	save_row.add_child(clr_btn)
+	content.add_child(save_row)
+
+	_update_step_count()
+	_rebuild_step_list()
+	return content.get_meta("card_panel")
+
+
+func _rebuild_step_list() -> void:
+	if _steps_box == null:
+		return
+	for c in _steps_box.get_children():
+		c.queue_free()
+	for i in _edit_steps.size():
+		var r := HBoxContainer.new()
+		r.add_theme_constant_override("separation", 6)
+		var lbl := Label.new()
+		lbl.text = "Step %d  ·  pose terekam" % (i + 1)
+		lbl.add_theme_font_size_override("font_size", 11)
+		lbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		r.add_child(lbl)
+		var del := Button.new()
+		del.text = "✕"
+		del.focus_mode = Control.FOCUS_NONE
+		del.custom_minimum_size = Vector2(26, 0)
+		del.pressed.connect(_remove_step.bind(i))
+		r.add_child(del)
+		_steps_box.add_child(r)
+
+
+func _remove_step(idx: int) -> void:
+	if idx >= 0 and idx < _edit_steps.size():
+		_edit_steps.remove_at(idx)
+		_update_step_count()
+		_rebuild_step_list()
+
+
+func _on_preview_steps() -> void:
+	if _robot_ref and _robot_ref.has_method("play_motion") and not _edit_steps.is_empty():
+		_robot_ref.play_motion(_edit_steps.duplicate(true), false)
+
+
+func _on_load_to_editor() -> void:
+	# Muat scene terpilih di daftar Gerakan ke editor (untuk diubah step-nya)
+	if motion_option == null:
+		return
+	var nm := motion_option.get_item_text(motion_option.selected)
+	if not motions_data.has(nm):
+		return
+	_edit_steps = motions_data[nm].get("steps", []).duplicate(true)
+	scene_name_edit.text = nm
+	_update_step_count()
+	_rebuild_step_list()
+
+
+func _capture_pose() -> Dictionary:
+	var j := {}
+	if _robot_ref and _robot_ref.has_method("get_joint_angle"):
+		for jn in JOINT_NAMES:
+			j[jn] = round(rad_to_deg(_robot_ref.get_joint_angle(jn)) * 10.0) / 10.0
+	return {"t": 0.6, "p": 0.2, "j": j}
+
+
+func _on_capture_step() -> void:
+	if _edit_steps.size() >= MAX_STEPS:
+		_flash_count("Maks %d step!" % MAX_STEPS)
+		return
+	_edit_steps.append(_capture_pose())
+	_update_step_count()
+	_rebuild_step_list()
+
+
+func _on_clear_scene() -> void:
+	_edit_steps.clear()
+	_update_step_count()
+	_rebuild_step_list()
+
+
+func _on_save_scene() -> void:
+	var nm := scene_name_edit.text.strip_edges()
+	if nm == "" or _edit_steps.is_empty():
+		_flash_count("Isi nama & minimal 1 step")
+		return
+	var user_count := 0
+	for k in motions_data:
+		if motions_data[k].get("user", false):
+			user_count += 1
+	if user_count >= MAX_SCENES and not motions_data.has(nm):
+		_flash_count("Maks %d scene tersimpan" % MAX_SCENES)
+		return
+	motions_data[nm] = {"hold": true, "user": true, "steps": _edit_steps.duplicate(true)}
+	_save_user_scenes()
+	if motion_option:
+		_refresh_motion_options()
+	_edit_steps.clear()
+	_update_step_count()
+	_rebuild_step_list()
+	_flash_count("Tersimpan: %s" % nm)
+
+
+func _refresh_motion_options() -> void:
+	var cur := motion_option.get_item_text(motion_option.selected) if motion_option.item_count > 0 else ""
+	motion_option.clear()
+	for mname in motions_data.keys():
+		motion_option.add_item(mname)
+	for i in motion_option.item_count:
+		if motion_option.get_item_text(i) == cur:
+			motion_option.select(i)
+
+
+func _update_step_count() -> void:
+	if step_count_lbl:
+		step_count_lbl.text = "Step terekam: %d/%d" % [_edit_steps.size(), MAX_STEPS]
+
+
+func _flash_count(msg: String) -> void:
+	if step_count_lbl:
+		step_count_lbl.text = msg
+
+
+func _save_user_scenes() -> void:
+	var out := {}
+	for k in motions_data:
+		if motions_data[k].get("user", false):
+			out[k] = motions_data[k]
+	var f := FileAccess.open(USER_SCENES, FileAccess.WRITE)
+	if f:
+		f.store_string(JSON.stringify(out))
+		f.close()
+
+
+func _load_user_scenes() -> void:
+	if not FileAccess.file_exists(USER_SCENES):
+		return
+	var parsed = JSON.parse_string(FileAccess.get_file_as_string(USER_SCENES))
+	if typeof(parsed) == TYPE_DICTIONARY:
+		for k in parsed:
+			motions_data[k] = parsed[k]
 
 
 func _load_motions() -> void:
@@ -328,6 +611,7 @@ func _load_motions() -> void:
 	var parsed = JSON.parse_string(txt)
 	if typeof(parsed) == TYPE_DICTIONARY:
 		motions_data = parsed
+	_load_user_scenes()    # scene buatan user (user://) ikut muncul di daftar
 
 
 func _on_play() -> void:
@@ -847,6 +1131,20 @@ func update_from_robot(robot: Node3D) -> void:
 	# 4. System info
 	fps_lbl.text = "%d" % Engine.get_frames_per_second()
 	latency_lbl.text = "%.1f ms" % (1000.0 / max(1, Engine.get_frames_per_second()))
+
+	# Stat strip atas
+	if stat_batt:
+		stat_batt.text = "%.0f%%" % _battery_pct
+		stat_fps.text = "%d" % Engine.get_frames_per_second()
+		var ok := 0
+		for jn in JOINT_NAMES:
+			if not _robot_ref or not _robot_ref.has_method("get_servo_health") \
+					or _robot_ref.get_servo_health(jn) == "ok":
+				ok += 1
+		stat_active.text = "%d/20" % ok
+		stat_active.add_theme_color_override("font_color",
+			PAS_PURPLE if ok == 20 else Color(0.93, 0.20, 0.20))
+		stat_temp.text = "%.0f°" % (_temp_base + 6.0)
 	@warning_ignore("integer_division")
 	var elapsed_s := (Time.get_ticks_msec() - _start_time_ms) / 1000
 	@warning_ignore("integer_division")
