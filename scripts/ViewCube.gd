@@ -193,15 +193,51 @@ func _apply(preset: String) -> void:
 
 
 func _pick_face(local_pos: Vector2) -> void:
-	if _vp_cam == null or _main_cam == null or _vp == null or _vp.world_3d == null:
+	# Geometric ray-vs-box pick (no physics — the subviewport's own physics world
+	# doesn't step, so intersect_ray never hit anything). Transform the click ray
+	# into the cube's local space and slab-test the unit cube; the entry face's
+	# local normal maps straight to a FACE preset.
+	if _vp_cam == null or _main_cam == null or _cube == null:
 		return
-	var space := _vp.world_3d.direct_space_state
-	if space == null:
-		return
-	var from := _vp_cam.project_ray_origin(local_pos)
-	var dir := _vp_cam.project_ray_normal(local_pos)
-	var params := PhysicsRayQueryParameters3D.create(from, from + dir * 10.0)
-	var hit := space.intersect_ray(params)
-	if hit and hit.collider.has_meta("preset"):
-		if _main_cam.has_method("apply_view"):
-			_main_cam.apply_view(hit.collider.get_meta("preset"))
+	var inv := _cube.global_transform.affine_inverse()
+	var from: Vector3 = inv * _vp_cam.project_ray_origin(local_pos)
+	var dir: Vector3 = (inv.basis * _vp_cam.project_ray_normal(local_pos)).normalized()
+
+	const H := 0.5
+	var tmin := -INF
+	var tmax := INF
+	var hit_axis := -1
+	var hit_sign := 1.0
+	for axis in 3:
+		var o: float = from[axis]
+		var d: float = dir[axis]
+		if absf(d) < 1e-6:
+			if o < -H or o > H:
+				return            # parallel & outside this slab → miss
+			continue
+		var inv_d := 1.0 / d
+		var t1 := (-H - o) * inv_d
+		var t2 := (H - o) * inv_d
+		var sgn := -1.0
+		if t1 > t2:
+			var tmp := t1; t1 = t2; t2 = tmp
+			sgn = 1.0
+		if t1 > tmin:
+			tmin = t1
+			hit_axis = axis
+			hit_sign = sgn
+		tmax = minf(tmax, t2)
+	if hit_axis < 0 or tmin > tmax:
+		return            # ray misses the cube
+	var normal := Vector3.ZERO
+	normal[hit_axis] = hit_sign
+	# match entry normal to a face preset
+	var best := ""
+	var best_dot := 0.9
+	for f in FACES:
+		var d2: float = (f[0] as Vector3).dot(normal)
+		if d2 > best_dot:
+			best_dot = d2
+			best = f[1]
+	if best != "" and _main_cam.has_method("apply_view"):
+		_main_cam.apply_view(best)
