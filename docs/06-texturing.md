@@ -4,20 +4,28 @@
 
 The official OP3 meshes are one fused STL per link, but inside most of them the
 Dynamixel **servo is a separate shell** from the bracket. `split_servo.py`
-detects each servo by its XM-430 signature (~28.5 × 34 × 46.5 mm, vol ≈
-43 000 mm³), splits it out, and exports each link as a `.glb` with two named
-objects: **`servo`** and **`frame`**. These ship in `assets/op3_meshes/` and the
-twin renders the servo dark and the frame gun-metal, with the **fault red blink
-landing only on the `servo`** object.
+detects each servo by its XM-430 signature (~28.5 × 34 × 46.5 mm), splits it out,
+and exports each link as a `.glb` with two named objects: **`servo`** and
+**`frame`**. These ship in `assets/op3_meshes/` and the twin renders the servo
+dark and the frame gun-metal, with the **fault red blink landing only on the
+`servo`** object.
+
+Detection uses **two criteria (OR)** so it works on both watertight and open
+shells:
+
+- **by volume** — a watertight servo box (~43 000 mm³ enclosed), and
+- **by extents** — the bounding box matches the XM-430 (catches open shells whose
+  enclosed volume is meaningless).
+
+This finds the servo in **17 / 20 links**. Only the **elbow (`la3`/`ra3`)** and
+**knee (`ll4`/`rl4`)** keep their servo fused/fragmented into the bracket and
+stay all-frame — split those by hand in Blender if you want them targeted too.
 
 Regenerate (needs `trimesh scipy networkx` in a venv):
 
 ```bash
 python3 split_servo.py     # reads ROBOTIS-OP3-Common meshes -> assets/op3_meshes/*.glb
 ```
-
-Links whose servo is welded/fragmented (e.g. the knee `ll4`/`rl4`) stay all-frame
-— colour them by hand in Blender if you want them split too.
 
 ## Manual / custom painting in Blender (optional)
 
@@ -90,35 +98,34 @@ head, thighs); the rest keep the default black until you get to them.
 
 ## Auto-split status (which links to check)
 
-The servo/frame split was already done automatically for every link
-(`scratchpad/split_servo.py`, using the Dynamixel XM-430 size signature
-≈ 28.5 × 34 × 46.5 mm, ~43 000 mm³). Result per link — **you do NOT need to check
-all 21 one-by-one**, only eyeball the robot and revisit a link if its servo
-isn't black where you expect:
+The servo/frame split runs automatically for every link (`split_servo.py`, using
+the Dynamixel XM-430 size signature ≈ 28.5 × 34 × 46.5 mm, by volume **or**
+extents). Result per link — **you do NOT need to check all 21 one-by-one**, only
+eyeball the robot and revisit a link if its servo isn't dark where you expect:
 
 | Link | Body part | Servo auto-detected? |
 | ---- | --------- | -------------------- |
-| body | torso | ✅ servo(s) black |
-| h1 | neck (head_pan) | ⬜ all-silver (bracket) |
-| h2 | head (head_tilt + cam) | ✅ servo black |
-| la1 / ra1 | shoulder-pitch bracket | ⬜ all-silver (bracket) |
-| la2 / ra2 | shoulder-roll + upper arm | ✅ servo black |
-| la3 / ra3 | elbow + forearm | ⬜ all-silver (bracket) |
-| ll1 / rl1 | hip-yaw | ⬜ all-silver (bracket) |
-| ll2 / rl2 | hip-roll | ✅ servo black |
-| ll3 / rl3 | hip-pitch (thigh) | ✅ servo black |
-| **ll4 / rl4** | **knee** | ⚠️ all-silver — **check first** |
-| ll5 / rl5 | ankle-pitch (shin) | ✅ servo black |
-| ll6 / rl6 | ankle-roll (foot) | ⬜ all-silver (foot plate) |
+| body | torso | ✅ servo(s) dark |
+| h1 | neck (head_pan) | ✅ servo (whole shell) |
+| h2 | head (head_tilt + cam) | ✅ servo dark |
+| la1 / ra1 | shoulder-pitch | ✅ servo (whole shell) |
+| la2 / ra2 | shoulder-roll + upper arm | ✅ servo dark |
+| **la3 / ra3** | **elbow + forearm** | ⚠️ all-frame — servo fused into arm |
+| ll1 / rl1 | hip-yaw | ✅ servo (whole shell) |
+| ll2 / rl2 | hip-roll | ✅ servo dark |
+| ll3 / rl3 | hip-pitch (thigh) | ✅ servo dark |
+| **ll4 / rl4** | **knee** | ⚠️ all-frame — 240 fragments |
+| ll5 / rl5 | ankle-pitch (shin) | ✅ servo dark |
+| ll6 / rl6 | ankle-roll (foot) | ✅ servo dark |
 
-- **✅ (10 links)** — a full servo box was found and coloured black; fault-red
-  targets only that servo. Nothing to do.
-- **⬜ (bracket/foot links)** — these segments are pure brackets/connectors with
-  no servo box, so all-silver is correct. Leave them.
-- **⚠️ ll4 / rl4 (knee)** — these STL meshes are heavily fragmented (~240 tiny
-  shells), so auto-detection is least reliable here. **Check these two first**;
-  if the knee servo should be black/red-targeted, redo just `rl4`/`ll4` in
+- **✅ (17 links)** — a servo was found and coloured dark; fault-red targets only
+  that servo (or the whole shell on the compact single-piece links h1/la1/ll1
+  etc., which *are* essentially the servo). Nothing to do.
+- **⚠️ elbow (la3/ra3) & knee (ll4/rl4)** — here the servo is fused into the
+  forearm (la3/ra3) or fragmented into ~240 shells (ll4/rl4), so auto-split can't
+  isolate it cleanly and the link stays all-frame; fault-red falls back to the
+  whole link. If you want the servo targeted precisely, redo just these four in
   Blender (separate the servo, name it `servo`, export `.glb`).
 
-So in practice only the **knee pair (ll4, rl4)** is worth a manual look; the rest
-are either correctly split or are genuine bracket parts.
+So in practice only the **elbow and knee pairs** are worth a manual look; the
+other 17 links are correctly split.

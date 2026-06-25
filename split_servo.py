@@ -1,7 +1,18 @@
 #!/usr/bin/env python3
 """Auto-split each OP3 link STL into servo vs frame and export a .glb with two
-named objects ('servo' black, 'frame' silver). Servo is detected by its
-Dynamixel XM-430 signature (~28.5 x 34 x 46.5 mm, volume ~43000 mm3)."""
+named objects ('servo' dark, 'frame' gun-metal). Servo is detected by its
+Dynamixel XM-430 signature (~28.5 x 34 x 46.5 mm).
+
+Detection uses TWO criteria (OR), because some link shells are watertight
+(reliable enclosed volume) while others are open shells (bogus volume):
+  - by_vol: watertight servo box, ~43 000 mm3 enclosed.
+  - by_ext: bounding-box extents match the XM-430 (works for open shells too).
+This finds the servo in 17/20 links. The elbow (la3/ra3) and knee (ll4/rl4) have
+their servo fused/fragmented into the bracket and stay all-frame — split those
+by hand in Blender if needed (see docs/06-texturing.md).
+
+Materials are kept LOW-metallic on purpose: a high metallic factor makes the
+flat surfaces mirror the bright sky and blow out to white in the twin."""
 import trimesh, numpy as np, os, sys
 from trimesh.visual.material import PBRMaterial
 
@@ -10,17 +21,21 @@ DST = "assets/op3_meshes"
 SCALE = 0.001   # mm -> m (sama seperti stl2obj)
 
 def is_servo(c):
-    v = abs(c.volume)                 # mm^3
-    e = sorted(c.extents)            # mm, ascending
-    return 32000 < v < 60000 and 24 < e[0] < 33 and 43 < e[2] < 52
+    if len(c.faces) < 1200:           # buang shell remeh (sekrup/pin)
+        return False
+    v = abs(c.volume)                 # mm^3 (hanya valid bila watertight)
+    e = sorted(c.extents)             # mm, ascending; XM-430 ~ 28.5 x 34 x 46.5
+    by_vol = 32000 < v < 60000 and 24 < e[0] < 33 and 43 < e[2] < 52
+    by_ext = (23 < e[0] < 34) and (28 < e[1] < 41) and (41 < e[2] < 53)
+    return by_vol or by_ext
 
 def mat(name, rgb, metal, rough):
     return PBRMaterial(name=name,
         baseColorFactor=[rgb[0], rgb[1], rgb[2], 1.0],
         metallicFactor=metal, roughnessFactor=rough)
 
-SERVO_MAT = mat("servo", (0.10, 0.10, 0.12), 0.6, 0.45)
-FRAME_MAT = mat("frame", (0.55, 0.56, 0.60), 0.85, 0.34)
+SERVO_MAT = mat("servo", (0.07, 0.07, 0.09), 0.35, 0.55)
+FRAME_MAT = mat("frame", (0.46, 0.48, 0.52), 0.12, 0.62)
 
 links = [os.path.splitext(f)[0] for f in sorted(os.listdir(SRC)) if f.endswith(".stl")]
 for name in links:
