@@ -219,6 +219,8 @@ Per-topic technical docs live in [`docs/`](docs/):
 - [04 — Servos & Health](docs/04-servos-health.md) — Dynamixel ID map, health
   blink, Protocol 2.0 / 2 Mbps reading.
 - [05 — Build & Deploy](docs/05-build-deploy.md) — exporting to Windows/Linux/macOS.
+- [06 — Texturing](docs/06-texturing.md) — painting servo-vs-metal parts in
+  Blender and exporting `.glb` (auto-used by the twin).
 
 ## OP3 joint reference (20 DOF)
 

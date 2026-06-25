@@ -80,7 +80,6 @@ var motions_data := {}
 var motion_option: OptionButton
 var play_btn: Button
 var stop_btn: Button
-var _walk_check: CheckButton
 
 # Editor pose/scene — batas seperti ROBOTIS: 7 step/scene, 256 scene tersimpan.
 const MAX_STEPS := 7
@@ -387,20 +386,14 @@ func _build_poses_section() -> PanelContainer:
 
 	content.add_child(row)
 
-	# Toggle jalan di tempat
-	var walk := CheckButton.new()
-	walk.text = "Jalan di Tempat"
-	walk.focus_mode = Control.FOCUS_NONE
-	walk.toggled.connect(_on_walk_toggled)
-	content.add_child(walk)
-	_walk_check = walk
+	var hint := Label.new()
+	hint.text = "Jalan/gerak mengikuti robot asli saat mode LIVE tersambung."
+	hint.add_theme_font_size_override("font_size", 10)
+	hint.add_theme_color_override("font_color", Color(0.53, 0.51, 0.63))
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	content.add_child(hint)
 
 	return content.get_meta("card_panel")
-
-
-func _on_walk_toggled(on: bool) -> void:
-	if _robot_ref and _robot_ref.has_method("set_walking"):
-		_robot_ref.set_walking(on)
 
 
 # ----------------------------------------------------------------------------
@@ -636,6 +629,25 @@ func _on_stop() -> void:
 		_robot_ref.go_default()
 
 
+func _on_reset_joint(jname: String) -> void:
+	# Kembalikan satu servo ke nilai default-nya
+	if _robot_ref and _robot_ref.has_method("reset_joint"):
+		_robot_ref.reset_joint(jname)
+		if _manip_ref and _manip_ref.has_method("select_joint"):
+			_manip_ref.select_joint(jname)
+			_highlight_selected(jname)
+
+
+func _on_reset_pose() -> void:
+	# Kembalikan semua servo ke pose default (walk-ready), beranimasi halus
+	if _robot_ref == null:
+		return
+	if _robot_ref.has_method("stop_motion"):
+		_robot_ref.stop_motion()
+	if _robot_ref.has_method("go_default"):
+		_robot_ref.go_default()
+
+
 func _build_graph_section() -> PanelContainer:
 	var content := _make_card("Tren Sudut Joint", PAS_SKY)
 
@@ -841,6 +853,17 @@ func _build_imu_orientation_group() -> Control:
 func _build_joints_section() -> PanelContainer:
 	var content := _make_card("Joints · 20 DOF — klik nama, geser slider", PAS_PEACH)
 
+	# Tombol kembalikan semua joint ke pose default (walk-ready)
+	var reset_row := HBoxContainer.new()
+	var reset_btn := Button.new()
+	reset_btn.text = "↺ Kembalikan Pose Default"
+	reset_btn.focus_mode = Control.FOCUS_NONE
+	reset_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	reset_btn.tooltip_text = "Kembalikan semua servo ke pose walk-ready"
+	reset_btn.pressed.connect(_on_reset_pose)
+	reset_row.add_child(reset_btn)
+	content.add_child(reset_row)
+
 	# Baris-baris joint: [nama (tombol)] [slider] [sudut]
 	var rows := VBoxContainer.new()
 	rows.add_theme_constant_override("separation", 2)
@@ -868,7 +891,7 @@ func _build_joints_section() -> PanelContainer:
 		name_btn.text = "%02d  %s" % [sid, jname]
 		name_btn.flat = true
 		name_btn.focus_mode = Control.FOCUS_NONE
-		name_btn.custom_minimum_size = Vector2(118, 0)
+		name_btn.custom_minimum_size = Vector2(104, 0)
 		name_btn.add_theme_font_size_override("font_size", 11)
 		name_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		name_btn.add_theme_color_override("font_color", Color(0.20, 0.23, 0.28))
@@ -899,6 +922,16 @@ func _build_joints_section() -> PanelContainer:
 		angle_lbl.custom_minimum_size = Vector2(48, 0)
 		joint_angle_lbls[jname] = angle_lbl
 		row.add_child(angle_lbl)
+
+		# Tombol kembalikan servo ini ke default-nya
+		var rb := Button.new()
+		rb.text = "↺"
+		rb.focus_mode = Control.FOCUS_NONE
+		rb.flat = true
+		rb.custom_minimum_size = Vector2(22, 0)
+		rb.tooltip_text = "Kembalikan %s ke default" % jname
+		rb.pressed.connect(_on_reset_joint.bind(jname))
+		row.add_child(rb)
 
 		rows.add_child(row)
 

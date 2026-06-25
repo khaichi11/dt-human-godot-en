@@ -45,8 +45,19 @@ var _links: Dictionary = {}
 
 var model_root: Node3D
 var _frame_mat: StandardMaterial3D
-var _link_mats := {}            # joint_name -> StandardMaterial3D (per-link)
+var _silver_mat: StandardMaterial3D
+var _link_mats := {}            # joint_name -> StandardMaterial3D (per-link, OBJ)
+var _link_base_col := {}        # joint_name -> Color (warna normal: hitam/silver)
+var _hl_servo := {}             # joint_name -> MeshInstance3D (sub-mesh servo, GLB)
+var _hl_servo_mat := {}         # joint_name -> StandardMaterial3D (overlay health)
 var _health := {}               # joint_name -> "ok" | "warn" | "fault"
+
+# Pembedaan servo vs besi yang akurat butuh mesh dipisah per-komponen (di
+# Blender) — mesh OP3 per-link menyatukan servo+bracket. Default: hitam seragam.
+# Saat file .glb hasil cat tersedia, materialnya dipakai apa adanya (lihat
+# docs/06-texturing.md). SILVER_MESHES sengaja dikosongkan.
+const SILVER_MESHES := {}
+const COL_SILVER := Color(0.32, 0.34, 0.38)   # gunmetal (besi/bracket)
 
 
 func _ready() -> void:
@@ -55,6 +66,12 @@ func _ready() -> void:
 	_frame_mat.metallic = 0.65           # aluminium anodized hitam (mengkilap halus)
 	_frame_mat.roughness = 0.40
 	_frame_mat.metallic_specular = 0.55
+
+	_silver_mat = StandardMaterial3D.new()
+	_silver_mat.albedo_color = COL_SILVER
+	_silver_mat.metallic = 0.30          # rangka/bracket aluminium (gunmetal, tak silau)
+	_silver_mat.roughness = 0.55
+	_silver_mat.metallic_specular = 0.4
 	_frame_mat.rim_enabled = true        # rim halus mempertegas tepi/bentuk
 	_frame_mat.rim = 0.3
 	_frame_mat.rim_tint = 0.5
@@ -139,59 +156,91 @@ func _build() -> void:
 
 
 func _attach_mesh(parent: Node3D, mesh_basename: String, joint_name: String) -> void:
-	var mesh := _load_mesh(mesh_basename)
-	if mesh == null:
+	var res := _load_link_resource(mesh_basename)
+	if res == null:
 		return
+	# .blend/.glb hasil cat (multi-objek + material) -> pakai apa adanya;
+	# .obj -> mesh tunggal + material kode (hitam/silver).
+	if res is PackedScene:
+		_attach_scene(parent, res as PackedScene, joint_name)
+	elif res is Mesh:
+		_attach_single_mesh(parent, res as Mesh, mesh_basename, joint_name)
+
+
+func _attach_single_mesh(parent: Node3D, mesh: Mesh, mesh_basename: String, joint_name: String) -> void:
 	var mi := MeshInstance3D.new()
 	mi.name = mesh_basename
 	mi.mesh = mesh
-	# Tiap link punya material sendiri agar bisa diberi warna health terpisah
 	if joint_name != "":
-		var lm := _frame_mat.duplicate()
+		var base: StandardMaterial3D = _silver_mat if SILVER_MESHES.has(mesh_basename) else _frame_mat
+		var lm := base.duplicate()
 		mi.material_override = lm
 		_link_mats[joint_name] = lm
+		_link_base_col[joint_name] = base.albedo_color
 	else:
 		mi.material_override = _frame_mat
 	parent.add_child(mi)
-
-	# Collision (convex) supaya link bisa diklik di 3D untuk memilih jointnya
 	if joint_name != "":
-		var body := StaticBody3D.new()
-		body.name = "pick_" + joint_name
-		body.collision_layer = PICK_LAYER
-		body.collision_mask = 0
-		body.set_meta("joint_name", joint_name)
-		var shape := CollisionShape3D.new()
-		shape.shape = mesh.create_convex_shape()
-		body.add_child(shape)
-		parent.add_child(body)
+		_add_pick_collision(parent, mesh, joint_name)
 
 
-func _load_mesh(basename: String) -> Mesh:
-	var path := MESH_DIR + basename + ".obj"
-	if not ResourceLoader.exists(path):
-		push_warning("OP3Robot: mesh belum ada/diimport: %s" % path)
-		return null
-	var res := load(path)
-	if res is Mesh:
-		return res
-	if res is PackedScene:
-		# fallback bila importer meng-import sebagai scene
-		var inst := (res as PackedScene).instantiate()
-		var found := _find_mesh(inst)
-		inst.queue_free()
-		return found
-	push_warning("OP3Robot: tipe resource tak terduga untuk %s" % path)
-	return null
+func _attach_scene(parent: Node3D, scene: PackedScene, joint_name: String) -> void:
+	# .glb berisi sub-objek "servo" & "frame" dengan MATERIAL BAWAAN (hasil cat).
+	# Material dipakai apa adanya -> bisa custom di Blender. Health (merah) hanya
+	# meng-override sub-mesh "servo" saat fault, lalu dikembalikan saat ok.
+	var inst := scene.instantiate()
+	parent.add_child(inst)
+	var mis: Array[MeshInstance3D] = []
+	_collect_mesh_instances(inst, mis)
+	var servo: MeshInstance3D = null
+	for m in mis:
+		if m.mesh == null:
+			continue
+		if servo == null and "servo" in m.name.to_lower():
+			servo = m
+		if joint_name != "":
+			var body := StaticBody3D.new()
+			body.collision_layer = PICK_LAYER
+			body.collision_mask = 0
+			body.set_meta("joint_name", joint_name)
+			var cs := CollisionShape3D.new()
+			cs.shape = m.mesh.create_convex_shape()
+			body.add_child(cs)
+			m.add_child(body)
+	# Fallback: bila tak ada objek "servo", pakai sub-mesh pertama utk health.
+	if servo == null and not mis.is_empty():
+		servo = mis[0]
+	if joint_name != "" and servo != null:
+		_hl_servo[joint_name] = servo
+		_hl_servo_mat[joint_name] = StandardMaterial3D.new()
 
 
-func _find_mesh(node: Node) -> Mesh:
-	if node is MeshInstance3D and (node as MeshInstance3D).mesh != null:
-		return (node as MeshInstance3D).mesh
+func _add_pick_collision(parent: Node3D, mesh: Mesh, joint_name: String) -> void:
+	var body := StaticBody3D.new()
+	body.name = "pick_" + joint_name
+	body.collision_layer = PICK_LAYER
+	body.collision_mask = 0
+	body.set_meta("joint_name", joint_name)
+	var shape := CollisionShape3D.new()
+	shape.shape = mesh.create_convex_shape()
+	body.add_child(shape)
+	parent.add_child(body)
+
+
+func _collect_mesh_instances(node: Node, out: Array[MeshInstance3D]) -> void:
+	if node is MeshInstance3D:
+		out.append(node)
 	for c in node.get_children():
-		var m := _find_mesh(c)
-		if m != null:
-			return m
+		_collect_mesh_instances(c, out)
+
+
+func _load_link_resource(basename: String) -> Resource:
+	# Prioritas: .blend (edit langsung di Blender) -> .glb (cat) -> .obj (default).
+	for ext in [".blend", ".glb", ".obj"]:
+		var path: String = MESH_DIR + basename + ext
+		if ResourceLoader.exists(path):
+			return load(path)
+	push_warning("OP3Robot: mesh belum ada/diimport: %s" % basename)
 	return null
 
 
@@ -200,41 +249,9 @@ func _find_mesh(node: Node) -> Mesh:
 # frame sehingga saat pose berubah (jongkok, push-up, gerakin joint) robot
 # tetap menapak — mengikuti "gravitasi" visual, tidak melayang/menembus.
 # ============================================================================
-var _walking := false
-
 func _process(_delta: float) -> void:
-	if _walking:
-		_walk_gait()
 	_ground_to_floor()
 	_blink_health()
-
-
-# ============================================================================
-# JALAN DI TEMPAT — gait sinusoidal ringan (kaki mengayun, base diam).
-# Tanpa lokalisasi, robot tak translasi; ini representasi visual walking.
-# ============================================================================
-func set_walking(on: bool) -> void:
-	_walking = on
-	if not on:
-		_apply_default_pose()
-
-
-func is_walking() -> bool:
-	return _walking
-
-
-func _walk_gait() -> void:
-	var t := Time.get_ticks_msec() / 1000.0
-	var sw := sin(t * 3.2)
-	var sw2 := sin(t * 3.2 + PI)
-	set_joint_angle("l_hip_pitch", deg_to_rad(-70.0 + sw * 22.0))
-	set_joint_angle("r_hip_pitch", deg_to_rad(70.0 + sw2 * 22.0))
-	set_joint_angle("l_knee", deg_to_rad(142.0 - maxf(0.0, sw) * 35.0))
-	set_joint_angle("r_knee", deg_to_rad(-142.0 + maxf(0.0, sw2) * 35.0))
-	set_joint_angle("l_ank_pitch", deg_to_rad(70.0 - sw * 10.0))
-	set_joint_angle("r_ank_pitch", deg_to_rad(-70.0 - sw2 * 10.0))
-	set_joint_angle("l_sho_pitch", deg_to_rad(-15.0 + sw2 * 22.0))
-	set_joint_angle("r_sho_pitch", deg_to_rad(15.0 + sw * 22.0))
 
 
 # ============================================================================
@@ -244,14 +261,17 @@ func _walk_gait() -> void:
 # koneksi — lihat RosBridge / topic /dt/servo_health.
 # ============================================================================
 func set_servo_health(joint_name: String, state: String) -> void:
-	if not _link_mats.has(joint_name):
+	if not (_link_mats.has(joint_name) or _hl_servo.has(joint_name)):
 		return
 	_health[joint_name] = state
 	if state == "ok":
-		var m: StandardMaterial3D = _link_mats[joint_name]
-		m.albedo_color = COL_FRAME
-		m.metallic = 0.65
-		m.emission_enabled = false
+		if _link_mats.has(joint_name):             # OBJ: pulihkan material kode
+			var m: StandardMaterial3D = _link_mats[joint_name]
+			m.albedo_color = _link_base_col.get(joint_name, COL_FRAME)
+			m.metallic = 0.65
+			m.emission_enabled = false
+		if _hl_servo.has(joint_name):              # GLB: lepas override -> cat asli
+			(_hl_servo[joint_name] as MeshInstance3D).material_override = null
 
 
 func get_servo_health(joint_name: String) -> String:
@@ -266,13 +286,20 @@ func _blink_health() -> void:
 		var state: String = _health[jname]
 		if state == "ok":
 			continue
-		var m: StandardMaterial3D = _link_mats.get(jname)
+		# Material dianimasikan: OBJ = material link; GLB = overlay yang dipasang
+		# HANYA pada sub-mesh "servo" (besi/bracket tak ikut merah).
+		var m: StandardMaterial3D = null
+		if _link_mats.has(jname):
+			m = _link_mats[jname]
+		elif _hl_servo.has(jname):
+			m = _hl_servo_mat[jname]
+			m.shading_mode = BaseMaterial3D.SHADING_MODE_PER_PIXEL
+			(_hl_servo[jname] as MeshInstance3D).material_override = m
 		if m == null:
 			continue
 		m.metallic = 0.1
 		m.emission_enabled = true
 		if state == "fault":
-			# merah <-> hitam, kedip cepat
 			var s := (sin(t * 9.0) + 1.0) * 0.5
 			m.albedo_color = Color(0.05, 0.02, 0.02).lerp(Color(0.95, 0.08, 0.08), s)
 			m.emission = Color(0.9, 0.05, 0.05) * s
@@ -410,6 +437,15 @@ var _playing := false
 func _apply_default_pose() -> void:
 	for jname in DEFAULT_POSE.keys():
 		set_joint_angle(jname, deg_to_rad(DEFAULT_POSE[jname]))
+
+
+# Nilai default (derajat) satu servo, dan reset satu servo ke default-nya.
+func get_default_angle_deg(joint_name: String) -> float:
+	return float(DEFAULT_POSE.get(joint_name, 0.0))
+
+
+func reset_joint(joint_name: String) -> void:
+	set_joint_angle(joint_name, deg_to_rad(get_default_angle_deg(joint_name)))
 
 
 # ============================================================================

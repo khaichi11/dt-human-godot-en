@@ -475,7 +475,7 @@ func _build_3d_scene() -> void:
 	sky_mat.sky_horizon_color = Color(0.88, 0.90, 0.95)
 	sky_mat.ground_horizon_color = Color(0.86, 0.88, 0.93)
 	sky_mat.ground_bottom_color = Color(0.80, 0.82, 0.88)
-	sky_mat.sky_energy_multiplier = 1.0
+	sky_mat.sky_energy_multiplier = 0.55     # redup supaya silver tak ter-blowout putih
 	var sky := Sky.new()
 	sky.sky_material = sky_mat
 
@@ -483,22 +483,24 @@ func _build_3d_scene() -> void:
 	env.background_mode = Environment.BG_SKY
 	env.sky = sky
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_SKY
-	env.ambient_light_energy = 0.9
+	env.ambient_light_energy = 0.35
 	env.reflected_light_source = Environment.REFLECTION_SOURCE_SKY  # metal memantulkan sky
 	env.ssao_enabled = true
-	env.ssao_intensity = 0.8
-	env.ssao_radius = 0.05
+	env.ssao_intensity = 0.5
+	env.ssao_radius = 0.04
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 
 	var world_env := WorldEnvironment.new()
 	world_env.environment = env
 	sub_viewport.add_child(world_env)
 
-	# Pencahayaan: key + fill supaya highlight metal jelas dari segala sudut
-	_add_dir_light(Vector3(-50, -30, 0), 1.1, Color(1.0, 0.99, 0.96), true)  # key hangat
-	_add_dir_light(Vector3(-30, 120, 0), 0.45, Color(0.9, 0.94, 1.0))        # fill dingin
-	_add_dir_light(Vector3(-20, 55, 0),  0.35, Color(1, 1, 1))               # fill kanan
-	_add_dir_light(Vector3(45, 10, 0),   0.2, Color(0.95, 0.97, 1.0))        # bawah
+	# Pencahayaan SEIMBANG dari 5 penjuru (tanpa shadow) supaya robot terbaca
+	# bagus dari sudut manapun, tapi tidak terlalu terang (silver tetap silver).
+	_add_dir_light(Vector3(-40, -35, 0),  0.28, Color(1.0, 0.99, 0.97))   # depan-kiri
+	_add_dir_light(Vector3(-35, 145, 0),  0.24, Color(0.94, 0.96, 1.0))   # belakang
+	_add_dir_light(Vector3(-30, 65, 0),   0.22, Color(1, 1, 1))           # kanan
+	_add_dir_light(Vector3(-30, -120, 0), 0.22, Color(1, 1, 1))           # kiri
+	_add_dir_light(Vector3(50, 20, 0),    0.16, Color(0.95, 0.97, 1.0))   # bawah-isi
 
 	# Lantai grid
 	var floor := _make_floor()

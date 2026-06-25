@@ -101,6 +101,13 @@ func _zoom(delta_factor: float) -> void:
 	_update_transform()
 
 
+# Orbit kamera dengan delta sudut (dipakai ViewCube saat di-drag).
+func orbit_by(dyaw: float, dpitch: float) -> void:
+	yaw_deg += dyaw
+	pitch_deg = clamp(pitch_deg + dpitch, min_pitch, max_pitch)
+	_update_transform()
+
+
 # Preset arah pandang. Robot menghadap -Z (Godot), sisi kanannya di +X.
 const VIEW_PRESETS := {
 	"depan":    [180.0, -8.0],
