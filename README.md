@@ -205,6 +205,21 @@ Then reopen the project so Godot reimports the new files.
 
 ---
 
+## Technical documentation
+
+Per-topic technical docs live in [`docs/`](docs/):
+
+- [01 — Kinematics](docs/01-kinematics.md) — forward kinematics, ROS→Godot
+  coordinate conversion, floor grounding, and the analytical leg **inverse
+  kinematics** formulas (reference).
+- [02 — Connection](docs/02-connection.md) — rosbridge/WebSocket, topics &
+  message formats, low-latency UDP alternative.
+- [03 — Motions & Pose Editor](docs/03-motions-poses.md) — ROBOTIS action file
+  format (256 pages × 7 steps), playback, in-app scene editor.
+- [04 — Servos & Health](docs/04-servos-health.md) — Dynamixel ID map, health
+  blink, Protocol 2.0 / 2 Mbps reading.
+- [05 — Build & Deploy](docs/05-build-deploy.md) — exporting to Windows/Linux/macOS.
+
 ## OP3 joint reference (20 DOF)
 
 | ID | Joint | ID | Joint |
