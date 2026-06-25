@@ -65,6 +65,7 @@ func _ready() -> void:
 	add_child(model_root)
 
 	_build()
+	_add_head_accents()
 	_apply_default_pose()
 	_stand_on_floor()
 
@@ -136,6 +137,42 @@ func _build() -> void:
 		_links[jname] = joint
 		joints[jname] = {"node": joint, "axis": axis}
 		joint_angles[jname] = 0.0
+
+
+func _add_head_accents() -> void:
+	var head: Node3D = joints.get("head_tilt", {}).get("node")
+	if head == null:
+		return
+	# Mata: 2 lens cap emas/brass (kanan & kiri), menghadap +X (depan, ROS)
+	for sgn in [1.0, -1.0]:
+		var eye := _accent_cyl(0.0105, 0.009, Color(0.86, 0.66, 0.18), 0.7, 0.30)
+		eye.position = Vector3(0.0185, 0.023 * sgn, 0.050)
+		eye.rotation_degrees = Vector3(0, 0, -90)   # sumbu cylinder +Y -> +X
+		head.add_child(eye)
+	# Kamera: lensa biru di tengah (sedikit di bawah mata)
+	var cam := _accent_cyl(0.0085, 0.008, Color(0.10, 0.45, 0.92), 0.2, 0.25)
+	cam.position = Vector3(0.0195, 0.0, 0.040)
+	cam.rotation_degrees = Vector3(0, 0, -90)
+	head.add_child(cam)
+
+
+func _accent_cyl(radius: float, height: float, color: Color, metal: float, rough: float) -> MeshInstance3D:
+	var m := CylinderMesh.new()
+	m.top_radius = radius
+	m.bottom_radius = radius
+	m.height = height
+	m.radial_segments = 20
+	var mi := MeshInstance3D.new()
+	mi.mesh = m
+	var mat := StandardMaterial3D.new()
+	mat.albedo_color = color
+	mat.metallic = metal
+	mat.roughness = rough
+	mat.emission_enabled = true            # warna stabil dari sudut manapun
+	mat.emission = color
+	mat.emission_energy_multiplier = 0.35
+	mi.material_override = mat
+	return mi
 
 
 func _attach_mesh(parent: Node3D, mesh_basename: String, joint_name: String) -> void:
