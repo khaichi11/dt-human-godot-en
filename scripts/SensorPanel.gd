@@ -629,6 +629,16 @@ func _on_stop() -> void:
 		_robot_ref.go_default()
 
 
+func _on_reset_pose() -> void:
+	# Kembalikan semua servo ke pose default (walk-ready), beranimasi halus
+	if _robot_ref == null:
+		return
+	if _robot_ref.has_method("stop_motion"):
+		_robot_ref.stop_motion()
+	if _robot_ref.has_method("go_default"):
+		_robot_ref.go_default()
+
+
 func _build_graph_section() -> PanelContainer:
 	var content := _make_card("Tren Sudut Joint", PAS_SKY)
 
@@ -833,6 +843,17 @@ func _build_imu_orientation_group() -> Control:
 # ----------------------------------------------------------------------------
 func _build_joints_section() -> PanelContainer:
 	var content := _make_card("Joints · 20 DOF — klik nama, geser slider", PAS_PEACH)
+
+	# Tombol kembalikan semua joint ke pose default (walk-ready)
+	var reset_row := HBoxContainer.new()
+	var reset_btn := Button.new()
+	reset_btn.text = "↺ Kembalikan Pose Default"
+	reset_btn.focus_mode = Control.FOCUS_NONE
+	reset_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	reset_btn.tooltip_text = "Kembalikan semua servo ke pose walk-ready"
+	reset_btn.pressed.connect(_on_reset_pose)
+	reset_row.add_child(reset_btn)
+	content.add_child(reset_row)
 
 	# Baris-baris joint: [nama (tombol)] [slider] [sudut]
 	var rows := VBoxContainer.new()
