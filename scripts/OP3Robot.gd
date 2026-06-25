@@ -403,6 +403,15 @@ func _apply_default_pose() -> void:
 		set_joint_angle(jname, deg_to_rad(DEFAULT_POSE[jname]))
 
 
+# Nilai default (derajat) satu servo, dan reset satu servo ke default-nya.
+func get_default_angle_deg(joint_name: String) -> float:
+	return float(DEFAULT_POSE.get(joint_name, 0.0))
+
+
+func reset_joint(joint_name: String) -> void:
+	set_joint_angle(joint_name, deg_to_rad(get_default_angle_deg(joint_name)))
+
+
 # ============================================================================
 # PEMUTAR GERAKAN — menganimasikan twin lewat step-step motion ROBOTIS.
 # steps: Array of {"j": {joint: derajat}, "t": detik (durasi), "p": detik (jeda)}

@@ -629,6 +629,15 @@ func _on_stop() -> void:
 		_robot_ref.go_default()
 
 
+func _on_reset_joint(jname: String) -> void:
+	# Kembalikan satu servo ke nilai default-nya
+	if _robot_ref and _robot_ref.has_method("reset_joint"):
+		_robot_ref.reset_joint(jname)
+		if _manip_ref and _manip_ref.has_method("select_joint"):
+			_manip_ref.select_joint(jname)
+			_highlight_selected(jname)
+
+
 func _on_reset_pose() -> void:
 	# Kembalikan semua servo ke pose default (walk-ready), beranimasi halus
 	if _robot_ref == null:
@@ -882,7 +891,7 @@ func _build_joints_section() -> PanelContainer:
 		name_btn.text = "%02d  %s" % [sid, jname]
 		name_btn.flat = true
 		name_btn.focus_mode = Control.FOCUS_NONE
-		name_btn.custom_minimum_size = Vector2(118, 0)
+		name_btn.custom_minimum_size = Vector2(104, 0)
 		name_btn.add_theme_font_size_override("font_size", 11)
 		name_btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		name_btn.add_theme_color_override("font_color", Color(0.20, 0.23, 0.28))
@@ -913,6 +922,16 @@ func _build_joints_section() -> PanelContainer:
 		angle_lbl.custom_minimum_size = Vector2(48, 0)
 		joint_angle_lbls[jname] = angle_lbl
 		row.add_child(angle_lbl)
+
+		# Tombol kembalikan servo ini ke default-nya
+		var rb := Button.new()
+		rb.text = "↺"
+		rb.focus_mode = Control.FOCUS_NONE
+		rb.flat = true
+		rb.custom_minimum_size = Vector2(22, 0)
+		rb.tooltip_text = "Kembalikan %s ke default" % jname
+		rb.pressed.connect(_on_reset_joint.bind(jname))
+		row.add_child(rb)
 
 		rows.add_child(row)
 
