@@ -45,8 +45,17 @@ var _links: Dictionary = {}
 
 var model_root: Node3D
 var _frame_mat: StandardMaterial3D
+var _silver_mat: StandardMaterial3D
 var _link_mats := {}            # joint_name -> StandardMaterial3D (per-link)
+var _link_base_col := {}        # joint_name -> Color (warna normal: hitam/silver)
 var _health := {}               # joint_name -> "ok" | "warn" | "fault"
+
+# Pembedaan servo vs besi yang akurat butuh mesh dipisah per-komponen (di
+# Blender) — mesh OP3 per-link menyatukan servo+bracket. Default: hitam seragam.
+# Saat file .glb hasil cat tersedia, materialnya dipakai apa adanya (lihat
+# docs/06-texturing.md). SILVER_MESHES sengaja dikosongkan.
+const SILVER_MESHES := {}
+const COL_SILVER := Color(0.30, 0.31, 0.34)   # gunmetal (dipakai bila diisi)
 
 
 func _ready() -> void:
@@ -55,6 +64,12 @@ func _ready() -> void:
 	_frame_mat.metallic = 0.65           # aluminium anodized hitam (mengkilap halus)
 	_frame_mat.roughness = 0.40
 	_frame_mat.metallic_specular = 0.55
+
+	_silver_mat = StandardMaterial3D.new()
+	_silver_mat.albedo_color = COL_SILVER
+	_silver_mat.metallic = 0.85          # rangka/bracket aluminium (gunmetal)
+	_silver_mat.roughness = 0.34
+	_silver_mat.metallic_specular = 0.6
 	_frame_mat.rim_enabled = true        # rim halus mempertegas tepi/bentuk
 	_frame_mat.rim = 0.3
 	_frame_mat.rim_tint = 0.5
@@ -65,7 +80,6 @@ func _ready() -> void:
 	add_child(model_root)
 
 	_build()
-	_add_head_accents()
 	_apply_default_pose()
 	_stand_on_floor()
 
@@ -139,42 +153,6 @@ func _build() -> void:
 		joint_angles[jname] = 0.0
 
 
-func _add_head_accents() -> void:
-	var head: Node3D = joints.get("head_tilt", {}).get("node")
-	if head == null:
-		return
-	# Mata: 2 lens cap emas/brass (kanan & kiri), menghadap +X (depan, ROS)
-	for sgn in [1.0, -1.0]:
-		var eye := _accent_cyl(0.0105, 0.009, Color(0.86, 0.66, 0.18), 0.7, 0.30)
-		eye.position = Vector3(0.0185, 0.023 * sgn, 0.050)
-		eye.rotation_degrees = Vector3(0, 0, -90)   # sumbu cylinder +Y -> +X
-		head.add_child(eye)
-	# Kamera: lensa biru di tengah (sedikit di bawah mata)
-	var cam := _accent_cyl(0.0085, 0.008, Color(0.10, 0.45, 0.92), 0.2, 0.25)
-	cam.position = Vector3(0.0195, 0.0, 0.040)
-	cam.rotation_degrees = Vector3(0, 0, -90)
-	head.add_child(cam)
-
-
-func _accent_cyl(radius: float, height: float, color: Color, metal: float, rough: float) -> MeshInstance3D:
-	var m := CylinderMesh.new()
-	m.top_radius = radius
-	m.bottom_radius = radius
-	m.height = height
-	m.radial_segments = 20
-	var mi := MeshInstance3D.new()
-	mi.mesh = m
-	var mat := StandardMaterial3D.new()
-	mat.albedo_color = color
-	mat.metallic = metal
-	mat.roughness = rough
-	mat.emission_enabled = true            # warna stabil dari sudut manapun
-	mat.emission = color
-	mat.emission_energy_multiplier = 0.35
-	mi.material_override = mat
-	return mi
-
-
 func _attach_mesh(parent: Node3D, mesh_basename: String, joint_name: String) -> void:
 	var mesh := _load_mesh(mesh_basename)
 	if mesh == null:
@@ -182,11 +160,18 @@ func _attach_mesh(parent: Node3D, mesh_basename: String, joint_name: String) -> 
 	var mi := MeshInstance3D.new()
 	mi.name = mesh_basename
 	mi.mesh = mesh
-	# Tiap link punya material sendiri agar bisa diberi warna health terpisah
-	if joint_name != "":
-		var lm := _frame_mat.duplicate()
+	# Jika mesh .glb sudah punya material (hasil cat di Blender), pakai apa
+	# adanya — biar servo-hitam / besi-silver sesuai cat user.
+	var painted := mesh.get_surface_count() > 0 and mesh.surface_get_material(0) != null
+	if painted:
+		pass   # gunakan material bawaan mesh
+	elif joint_name != "":
+		# Tiap link punya material sendiri agar bisa diberi warna health terpisah
+		var base: StandardMaterial3D = _silver_mat if SILVER_MESHES.has(mesh_basename) else _frame_mat
+		var lm := base.duplicate()
 		mi.material_override = lm
 		_link_mats[joint_name] = lm
+		_link_base_col[joint_name] = base.albedo_color
 	else:
 		mi.material_override = _frame_mat
 	parent.add_child(mi)
@@ -205,20 +190,21 @@ func _attach_mesh(parent: Node3D, mesh_basename: String, joint_name: String) -> 
 
 
 func _load_mesh(basename: String) -> Mesh:
-	var path := MESH_DIR + basename + ".obj"
-	if not ResourceLoader.exists(path):
-		push_warning("OP3Robot: mesh belum ada/diimport: %s" % path)
-		return null
-	var res := load(path)
-	if res is Mesh:
-		return res
-	if res is PackedScene:
-		# fallback bila importer meng-import sebagai scene
-		var inst := (res as PackedScene).instantiate()
-		var found := _find_mesh(inst)
-		inst.queue_free()
-		return found
-	push_warning("OP3Robot: tipe resource tak terduga untuk %s" % path)
+	# Prioritaskan .glb (hasil cat Blender, material menyatu) -> baru .obj.
+	for ext in [".glb", ".obj"]:
+		var path: String = MESH_DIR + basename + ext
+		if not ResourceLoader.exists(path):
+			continue
+		var res := load(path)
+		if res is Mesh:
+			return res
+		if res is PackedScene:
+			var inst := (res as PackedScene).instantiate()
+			var found := _find_mesh(inst)
+			inst.queue_free()
+			if found != null:
+				return found
+	push_warning("OP3Robot: mesh belum ada/diimport: %s" % basename)
 	return null
 
 
@@ -237,41 +223,9 @@ func _find_mesh(node: Node) -> Mesh:
 # frame sehingga saat pose berubah (jongkok, push-up, gerakin joint) robot
 # tetap menapak — mengikuti "gravitasi" visual, tidak melayang/menembus.
 # ============================================================================
-var _walking := false
-
 func _process(_delta: float) -> void:
-	if _walking:
-		_walk_gait()
 	_ground_to_floor()
 	_blink_health()
-
-
-# ============================================================================
-# JALAN DI TEMPAT — gait sinusoidal ringan (kaki mengayun, base diam).
-# Tanpa lokalisasi, robot tak translasi; ini representasi visual walking.
-# ============================================================================
-func set_walking(on: bool) -> void:
-	_walking = on
-	if not on:
-		_apply_default_pose()
-
-
-func is_walking() -> bool:
-	return _walking
-
-
-func _walk_gait() -> void:
-	var t := Time.get_ticks_msec() / 1000.0
-	var sw := sin(t * 3.2)
-	var sw2 := sin(t * 3.2 + PI)
-	set_joint_angle("l_hip_pitch", deg_to_rad(-70.0 + sw * 22.0))
-	set_joint_angle("r_hip_pitch", deg_to_rad(70.0 + sw2 * 22.0))
-	set_joint_angle("l_knee", deg_to_rad(142.0 - maxf(0.0, sw) * 35.0))
-	set_joint_angle("r_knee", deg_to_rad(-142.0 + maxf(0.0, sw2) * 35.0))
-	set_joint_angle("l_ank_pitch", deg_to_rad(70.0 - sw * 10.0))
-	set_joint_angle("r_ank_pitch", deg_to_rad(-70.0 - sw2 * 10.0))
-	set_joint_angle("l_sho_pitch", deg_to_rad(-15.0 + sw2 * 22.0))
-	set_joint_angle("r_sho_pitch", deg_to_rad(15.0 + sw * 22.0))
 
 
 # ============================================================================
@@ -286,7 +240,7 @@ func set_servo_health(joint_name: String, state: String) -> void:
 	_health[joint_name] = state
 	if state == "ok":
 		var m: StandardMaterial3D = _link_mats[joint_name]
-		m.albedo_color = COL_FRAME
+		m.albedo_color = _link_base_col.get(joint_name, COL_FRAME)
 		m.metallic = 0.65
 		m.emission_enabled = false
 
