@@ -178,11 +178,13 @@ func _apply(preset: String) -> void:
 
 
 func _pick_face(local_pos: Vector2) -> void:
-	if _vp_cam == null or _main_cam == null:
+	if _vp_cam == null or _main_cam == null or _vp == null or _vp.world_3d == null:
+		return
+	var space := _vp.world_3d.direct_space_state
+	if space == null:
 		return
 	var from := _vp_cam.project_ray_origin(local_pos)
 	var dir := _vp_cam.project_ray_normal(local_pos)
-	var space := _vp.world_3d.direct_space_state
 	var params := PhysicsRayQueryParameters3D.create(from, from + dir * 10.0)
 	var hit := space.intersect_ray(params)
 	if hit and hit.collider.has_meta("preset"):

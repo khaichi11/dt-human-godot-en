@@ -155,7 +155,7 @@ func _bold_font() -> FontVariation:
 
 
 const PAS_PURPLE := Color(0.62, 0.52, 0.92)
-const PAS_MINT   := Color(0.42, 0.78, 0.65)
+const PAS_MINT   := Color(0.42, 0.70, 0.60)
 const PAS_SKY    := Color(0.46, 0.71, 0.94)
 const PAS_PEACH  := Color(0.98, 0.68, 0.58)
 const PAS_AMBER  := Color(0.97, 0.80, 0.46)
@@ -261,7 +261,7 @@ func _build_status_header() -> PanelContainer:
 
 	var line1 := HBoxContainer.new()
 	var dot := ColorRect.new()
-	dot.color = Color(0.0, 0.68, 0.40)
+	dot.color = Color(0.16, 0.56, 0.47)
 	dot.custom_minimum_size = Vector2(8, 8)
 	line1.add_child(dot)
 
@@ -271,7 +271,7 @@ func _build_status_header() -> PanelContainer:
 
 	var name_lbl := Label.new()
 	name_lbl.text = "OP3-001 · ONLINE"
-	name_lbl.add_theme_color_override("font_color", Color(0.0, 0.68, 0.40))
+	name_lbl.add_theme_color_override("font_color", Color(0.16, 0.56, 0.47))
 	name_lbl.add_theme_font_size_override("font_size", 14)
 	line1.add_child(name_lbl)
 	vb.add_child(line1)
@@ -385,7 +385,7 @@ func _build_battery_section() -> PanelContainer:
 	battery_voltage_lbl = Label.new()
 	battery_voltage_lbl.text = "11.7 V"
 	battery_voltage_lbl.add_theme_font_size_override("font_size", 22)
-	battery_voltage_lbl.add_theme_color_override("font_color", Color(1, 1, 1))
+	battery_voltage_lbl.add_theme_color_override("font_color", Color(0.22, 0.20, 0.32))
 	pct_row.add_child(battery_voltage_lbl)
 
 	var spacer := Control.new()
@@ -395,7 +395,7 @@ func _build_battery_section() -> PanelContainer:
 	battery_status_lbl = Label.new()
 	battery_status_lbl.text = "%.0f%%" % _battery_pct
 	battery_status_lbl.add_theme_font_size_override("font_size", 22)
-	battery_status_lbl.add_theme_color_override("font_color", Color(0.0, 0.60, 0.35))
+	battery_status_lbl.add_theme_color_override("font_color", Color(0.16, 0.56, 0.47))
 	pct_row.add_child(battery_status_lbl)
 	content.add_child(pct_row)
 
@@ -438,9 +438,9 @@ func _build_imu_section() -> PanelContainer:
 
 	# Tiga sub-grup: Gyro / Accel / Orientation
 	content.add_child(_build_imu_subgroup("Gyroscope (°/s)", imu_gyro_lbls,
-		Color(1.0, 0.45, 0.45), Color(0.0, 0.62, 0.35), Color(0.55, 0.45, 0.86)))
+		Color(1.0, 0.45, 0.45), Color(0.16, 0.56, 0.47), Color(0.55, 0.45, 0.86)))
 	content.add_child(_build_imu_subgroup("Accelerometer (m/s²)", imu_accel_lbls,
-		Color(1.0, 0.45, 0.45), Color(0.0, 0.62, 0.35), Color(0.55, 0.45, 0.86)))
+		Color(1.0, 0.45, 0.45), Color(0.16, 0.56, 0.47), Color(0.55, 0.45, 0.86)))
 	content.add_child(_build_imu_orientation_group())
 
 	return content.get_meta("card_panel")
@@ -574,7 +574,7 @@ func _build_joints_section() -> PanelContainer:
 		var dot := Panel.new()
 		dot.custom_minimum_size = Vector2(9, 9)
 		dot.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-		_set_dot_color(dot, Color(0.35, 0.78, 0.55))
+		_set_dot_color(dot, Color(0.42, 0.70, 0.60))
 		joint_health_dots[jname] = dot
 		row.add_child(dot)
 
@@ -684,7 +684,7 @@ func set_servo_health(health: Dictionary) -> void:
 		match String(health[jname]):
 			"fault": _set_dot_color(joint_health_dots[jname], Color(0.93, 0.20, 0.20))
 			"warn":  _set_dot_color(joint_health_dots[jname], Color(0.97, 0.75, 0.20))
-			_:       _set_dot_color(joint_health_dots[jname], Color(0.35, 0.78, 0.55))
+			_:       _set_dot_color(joint_health_dots[jname], Color(0.42, 0.70, 0.60))
 
 
 func _on_joint_clicked(jname: String) -> void:
@@ -719,7 +719,7 @@ func _highlight_selected(jname: String) -> void:
 		joint_name_btns[_sel_joint].add_theme_color_override("font_color", Color(0.20, 0.23, 0.28))
 	_sel_joint = jname
 	if joint_name_btns.has(jname):
-		joint_name_btns[jname].add_theme_color_override("font_color", Color(0.0, 0.62, 0.35))
+		joint_name_btns[jname].add_theme_color_override("font_color", Color(0.16, 0.56, 0.47))
 
 
 func _make_th(parent: Container, text: String) -> void:
@@ -837,8 +837,8 @@ func update_from_robot(robot: Node3D) -> void:
 		fill_sb.bg_color = Color(0.95, 0.70, 0.20)
 		battery_status_lbl.add_theme_color_override("font_color", Color(0.95, 0.70, 0.20))
 	else:
-		fill_sb.bg_color = Color(0.0, 0.60, 0.35)
-		battery_status_lbl.add_theme_color_override("font_color", Color(0.0, 0.60, 0.35))
+		fill_sb.bg_color = Color(0.16, 0.56, 0.47)
+		battery_status_lbl.add_theme_color_override("font_color", Color(0.16, 0.56, 0.47))
 	battery_bar.add_theme_stylebox_override("fill", fill_sb)
 
 	# Current draw (sedikit ber-fluktuasi)
@@ -867,7 +867,7 @@ func update_from_robot(robot: Node3D) -> void:
 			elif temp > 45.0:
 				lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
 			else:
-				lbl.add_theme_color_override("font_color", Color(0.0, 0.60, 0.35))
+				lbl.add_theme_color_override("font_color", Color(0.16, 0.56, 0.47))
 
 
 # Helper konversi (Godot punya rad_to_deg di 4.x, tapi kita pakai versi manual

@@ -25,7 +25,7 @@ const DETENT := deg_to_rad(5.0)  # putaran "ngeklik" tiap 5 derajat (penahan)
 const PICK_LAYER := 2            # layer fisika collider link (set di OP3Robot)
 
 const COL_RING   := Color(0.1, 0.85, 1.0)
-const COL_MARKER := Color(0.1, 1.0, 0.5)
+const COL_MARKER := Color(0.18, 0.62, 0.54)
 
 var _robot: Node3D
 var _camera: Camera3D
@@ -163,9 +163,12 @@ func _input(event: InputEvent) -> void:
 
 
 func _raycast_joint(mouse: Vector2) -> String:
+	var world := _camera.get_world_3d()
+	if world == null or world.direct_space_state == null:
+		return ""
+	var space := world.direct_space_state
 	var from := _camera.project_ray_origin(mouse)
 	var dir := _camera.project_ray_normal(mouse)
-	var space := _camera.get_world_3d().direct_space_state
 	var params := PhysicsRayQueryParameters3D.create(from, from + dir * 8.0)
 	params.collision_mask = PICK_LAYER
 	params.collide_with_areas = false

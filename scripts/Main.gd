@@ -23,7 +23,7 @@ const COL_VIEW_BG  := Color(0.92, 0.91, 0.96)   # latar viewport 3D
 
 # Aksen pastel per-seksi (badge ikon)
 const PAS_PURPLE := Color(0.62, 0.52, 0.92)
-const PAS_MINT   := Color(0.42, 0.78, 0.65)
+const PAS_MINT   := Color(0.42, 0.70, 0.60)
 const PAS_SKY    := Color(0.46, 0.71, 0.94)
 const PAS_PEACH  := Color(0.98, 0.68, 0.58)
 const PAS_AMBER  := Color(0.97, 0.80, 0.46)
@@ -318,7 +318,7 @@ func _refresh_mode_btn() -> void:
 		mode_btn.add_theme_color_override("font_color", COL_ACCENT)
 	else:
 		mode_btn.text = "● MODE: LIVE"
-		mode_btn.add_theme_color_override("font_color", Color(0.0, 0.62, 0.35))
+		mode_btn.add_theme_color_override("font_color", Color(0.16, 0.56, 0.47))
 
 
 # ----------------------------------------------------------------------------
@@ -350,7 +350,7 @@ func _on_ros_connect() -> void:
 func _on_ros_status(state: String) -> void:
 	match state:
 		"connecting": _set_ros_dot(Color(0.95, 0.70, 0.20))   # kuning
-		"open":       _set_ros_dot(Color(0.0, 0.72, 0.40))     # hijau
+		"open":       _set_ros_dot(Color(0.16, 0.56, 0.47))     # hijau
 		"closed":
 			_set_ros_dot(Color(0.90, 0.30, 0.30))              # merah
 			_live_connected = false
@@ -378,7 +378,7 @@ func _make_status_dot() -> Control:
 	var dot := Panel.new()
 	dot.custom_minimum_size = Vector2(12, 12)
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.0, 0.95, 0.5)
+	sb.bg_color = Color(0.32, 0.66, 0.56)
 	sb.corner_radius_top_left = 6
 	sb.corner_radius_top_right = 6
 	sb.corner_radius_bottom_left = 6
