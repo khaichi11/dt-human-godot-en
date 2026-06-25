@@ -35,6 +35,7 @@ var _last_mouse: Vector2
 
 var _ring: MeshInstance3D
 var _ring_mat: StandardMaterial3D
+var _needle_mat: StandardMaterial3D
 var _marker: MeshInstance3D
 var _label: Label3D
 var _editable := true
@@ -59,6 +60,12 @@ func _make_gizmo() -> void:
 	_ring_mat.albedo_color = COL_RING
 	_ring_mat.no_depth_test = true
 	_ring_mat.render_priority = 3
+	# Material jarum + panah arah (amber) supaya kontras dgn ring cyan
+	_needle_mat = StandardMaterial3D.new()
+	_needle_mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	_needle_mat.albedo_color = Color(1.0, 0.72, 0.15)
+	_needle_mat.no_depth_test = true
+	_needle_mat.render_priority = 4
 	add_child(_ring)
 	_ring.visible = false
 
@@ -227,14 +234,47 @@ func _build_ring(axis: Vector3) -> void:
 	var ref := Vector3.UP if abs(a.dot(Vector3.UP)) < 0.9 else Vector3.RIGHT
 	var u := a.cross(ref).normalized()
 	var v := a.cross(u).normalized()
+	var r := RING_RADIUS
 	var im := _ring.mesh as ImmediateMesh
 	im.clear_surfaces()
-	im.surface_begin(Mesh.PRIMITIVE_LINE_STRIP, _ring_mat)
+
+	# 1) Lingkaran (cyan)
+	im.surface_begin(Mesh.PRIMITIVE_LINES, _ring_mat)
 	var seg := 56
-	for i in seg + 1:
+	var prev := u * r
+	for i in range(1, seg + 1):
 		var t := TAU * float(i) / float(seg)
-		im.surface_add_vertex((u * cos(t) + v * sin(t)) * RING_RADIUS)
+		var cur := (u * cos(t) + v * sin(t)) * r
+		im.surface_add_vertex(prev)
+		im.surface_add_vertex(cur)
+		prev = cur
 	im.surface_end()
+
+	# 2) Jarum penunjuk + panah arah rotasi (amber). Ring menempel di node joint
+	#    sehingga jarum ikut berputar saat servo diputar -> terlihat arahnya.
+	im.surface_begin(Mesh.PRIMITIVE_LINES, _needle_mat)
+	# jarum radial (sumbu u) menembus sedikit keluar ring
+	var tip := u * r * 1.20
+	_seg(im, Vector3.ZERO, tip)
+	# kepala panah jarum (mengarah keluar)
+	_seg(im, tip, tip - u * r * 0.12 + v * r * 0.09)
+	_seg(im, tip, tip - u * r * 0.12 - v * r * 0.09)
+	# panah arah putar di ±90° (tunjuk CCW & CW) pada ring
+	for sgn: float in [1.0, -1.0]:
+		var ang := PI * 0.5 * sgn
+		var p := (u * cos(ang) + v * sin(ang)) * r
+		var tang := (-u * sin(ang) + v * cos(ang)) * sgn   # arah tangensial
+		var rad := p.normalized()
+		var atip := p + tang * (r * 0.20)
+		_seg(im, p, atip)                                  # busur kecil
+		_seg(im, atip, atip - tang * (r * 0.10) + rad * (r * 0.07))
+		_seg(im, atip, atip - tang * (r * 0.10) - rad * (r * 0.07))
+	im.surface_end()
+
+
+func _seg(im: ImmediateMesh, p1: Vector3, p2: Vector3) -> void:
+	im.surface_add_vertex(p1)
+	im.surface_add_vertex(p2)
 
 
 func _update_label() -> void:
