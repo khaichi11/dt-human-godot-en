@@ -48,8 +48,6 @@ var _frame_mat: StandardMaterial3D
 var _silver_mat: StandardMaterial3D
 var _link_mats := {}            # joint_name -> StandardMaterial3D (per-link, OBJ)
 var _link_base_col := {}        # joint_name -> Color (warna normal: hitam/silver)
-var _hl_servo := {}             # joint_name -> MeshInstance3D (sub-mesh servo, GLB)
-var _hl_servo_mat := {}         # joint_name -> StandardMaterial3D (overlay health GLB)
 var _health := {}               # joint_name -> "ok" | "warn" | "fault"
 
 # Pembedaan servo vs besi yang akurat butuh mesh dipisah per-komponen (di
@@ -57,7 +55,7 @@ var _health := {}               # joint_name -> "ok" | "warn" | "fault"
 # Saat file .glb hasil cat tersedia, materialnya dipakai apa adanya (lihat
 # docs/06-texturing.md). SILVER_MESHES sengaja dikosongkan.
 const SILVER_MESHES := {}
-const COL_SILVER := Color(0.30, 0.31, 0.34)   # gunmetal (dipakai bila diisi)
+const COL_SILVER := Color(0.32, 0.34, 0.38)   # gunmetal (besi/bracket)
 
 
 func _ready() -> void:
@@ -69,9 +67,9 @@ func _ready() -> void:
 
 	_silver_mat = StandardMaterial3D.new()
 	_silver_mat.albedo_color = COL_SILVER
-	_silver_mat.metallic = 0.85          # rangka/bracket aluminium (gunmetal)
-	_silver_mat.roughness = 0.34
-	_silver_mat.metallic_specular = 0.6
+	_silver_mat.metallic = 0.30          # rangka/bracket aluminium (gunmetal, tak silau)
+	_silver_mat.roughness = 0.55
+	_silver_mat.metallic_specular = 0.4
 	_frame_mat.rim_enabled = true        # rim halus mempertegas tepi/bentuk
 	_frame_mat.rim = 0.3
 	_frame_mat.rim_tint = 0.5
@@ -185,15 +183,24 @@ func _attach_single_mesh(parent: Node3D, mesh: Mesh, mesh_basename: String, join
 
 
 func _attach_scene(parent: Node3D, scene: PackedScene, joint_name: String) -> void:
+	# .glb berisi sub-objek "servo" & "frame" (hasil pisah otomatis). Warna
+	# diterapkan di kode (servo hitam, frame silver) — material glTF diabaikan.
 	var inst := scene.instantiate()
 	parent.add_child(inst)
 	var mis: Array[MeshInstance3D] = []
 	_collect_mesh_instances(inst, mis)
-	var servo: MeshInstance3D = null
+	var servo_mat: StandardMaterial3D = null
+	var first_mat: StandardMaterial3D = null
 	for m in mis:
 		if m.mesh == null:
 			continue
-		# collision per sub-mesh (untuk klik joint)
+		var is_servo := "servo" in m.name.to_lower()
+		var dup: StandardMaterial3D = (_frame_mat if is_servo else _silver_mat).duplicate()
+		m.material_override = dup
+		if first_mat == null:
+			first_mat = dup
+		if is_servo:
+			servo_mat = dup
 		if joint_name != "":
 			var body := StaticBody3D.new()
 			body.collision_layer = PICK_LAYER
@@ -203,15 +210,12 @@ func _attach_scene(parent: Node3D, scene: PackedScene, joint_name: String) -> vo
 			cs.shape = m.mesh.create_convex_shape()
 			body.add_child(cs)
 			m.add_child(body)
-		# sub-mesh bernama "servo*" jadi target health (merah hanya di servo)
-		if servo == null and "servo" in m.name.to_lower():
-			servo = m
-	# fallback: bila tak ada objek bernama servo, pakai sub-mesh pertama
-	if servo == null and not mis.is_empty():
-		servo = mis[0]
-	if joint_name != "" and servo != null:
-		_hl_servo[joint_name] = servo
-		_hl_servo_mat[joint_name] = StandardMaterial3D.new()
+	# Health menarget material servo (kalau ada); fallback ke sub-mesh pertama.
+	if joint_name != "":
+		var target: StandardMaterial3D = servo_mat if servo_mat != null else first_mat
+		if target != null:
+			_link_mats[joint_name] = target
+			_link_base_col[joint_name] = target.albedo_color
 
 
 func _add_pick_collision(parent: Node3D, mesh: Mesh, joint_name: String) -> void:
@@ -260,17 +264,14 @@ func _process(_delta: float) -> void:
 # koneksi — lihat RosBridge / topic /dt/servo_health.
 # ============================================================================
 func set_servo_health(joint_name: String, state: String) -> void:
-	if not (_link_mats.has(joint_name) or _hl_servo.has(joint_name)):
+	if not _link_mats.has(joint_name):
 		return
 	_health[joint_name] = state
 	if state == "ok":
-		if _link_mats.has(joint_name):       # OBJ: pulihkan warna material kode
-			var m: StandardMaterial3D = _link_mats[joint_name]
-			m.albedo_color = _link_base_col.get(joint_name, COL_FRAME)
-			m.metallic = 0.65
-			m.emission_enabled = false
-		if _hl_servo.has(joint_name):        # GLB/blend: lepas override -> cat asli
-			(_hl_servo[joint_name] as MeshInstance3D).material_override = null
+		var m: StandardMaterial3D = _link_mats[joint_name]
+		m.albedo_color = _link_base_col.get(joint_name, COL_FRAME)
+		m.metallic = 0.65
+		m.emission_enabled = false
 
 
 func get_servo_health(joint_name: String) -> String:
@@ -285,14 +286,9 @@ func _blink_health() -> void:
 		var state: String = _health[jname]
 		if state == "ok":
 			continue
-		# Pilih material yang dianimasikan: OBJ = material link; GLB = overlay
-		# yang dipasang HANYA pada sub-mesh "servo" (besi/bracket tak ikut merah).
-		var m: StandardMaterial3D = null
-		if _link_mats.has(jname):
-			m = _link_mats[jname]
-		elif _hl_servo.has(jname):
-			m = _hl_servo_mat[jname]
-			(_hl_servo[jname] as MeshInstance3D).material_override = m
+		# Material yang dianimasikan = material servo (GLB) atau link (OBJ),
+		# jadi merah hanya pada servo bila mesh sudah dipisah.
+		var m: StandardMaterial3D = _link_mats.get(jname)
 		if m == null:
 			continue
 		m.metallic = 0.1

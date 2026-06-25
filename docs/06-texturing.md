@@ -1,10 +1,29 @@
-# Texturing the robot in Blender (servo vs. metal)
+# Texturing — servo vs. metal
 
-The official OP3 meshes are **one fused mesh per link** — within `rl3.stl` the
-Dynamixel servo and its aluminium bracket are a single object with no material
-split. So colouring "servo = black, bracket/metal = silver" cannot be done in
-code; the parts must be separated and painted once in Blender. After that the
-twin uses your painted result automatically.
+## Automatic split (already done)
+
+The official OP3 meshes are one fused STL per link, but inside most of them the
+Dynamixel **servo is a separate shell** from the bracket. `split_servo.py`
+detects each servo by its XM-430 signature (~28.5 × 34 × 46.5 mm, vol ≈
+43 000 mm³), splits it out, and exports each link as a `.glb` with two named
+objects: **`servo`** and **`frame`**. These ship in `assets/op3_meshes/` and the
+twin renders the servo dark and the frame gun-metal, with the **fault red blink
+landing only on the `servo`** object.
+
+Regenerate (needs `trimesh scipy networkx` in a venv):
+
+```bash
+python3 split_servo.py     # reads ROBOTIS-OP3-Common meshes -> assets/op3_meshes/*.glb
+```
+
+Links whose servo is welded/fragmented (e.g. the knee `ll4`/`rl4`) stay all-frame
+— colour them by hand in Blender if you want them split too.
+
+## Manual / custom painting in Blender (optional)
+
+For finer control (real textures, custom colours, head camera lenses) edit in
+Blender. The fused links can be separated and painted once; the twin then uses
+your result automatically.
 
 ## Why this is the right tool
 
