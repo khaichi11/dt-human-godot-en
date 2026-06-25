@@ -16,6 +16,7 @@ extends Node3D
 # ============================================================================
 
 signal joint_rotated(joint_name: String, radians: float)
+signal servo_clicked(joint_name: String)   # untuk popup detail (ala Dynamixel Wizard)
 
 const RING_RADIUS := 0.05
 const MARKER_RADIUS := 0.009
@@ -39,6 +40,7 @@ var _needle_mat: StandardMaterial3D
 var _marker: MeshInstance3D
 var _label: Label3D
 var _editable := true
+var _armed := false             # "point" arm-edit: gizmo baru bisa memutar bila true
 var _drag_accum := 0.0          # akumulator sudut kontinu (sebelum di-detent)
 
 
@@ -102,6 +104,8 @@ func _make_gizmo() -> void:
 func select_joint(jname: String) -> void:
 	if _robot == null or not _robot.joints.has(jname):
 		return
+	if jname != _selected:
+		_armed = false                  # pindah joint -> wajib arm ulang
 	_selected = jname
 	var node: Node3D = _robot.joints[jname]["node"]
 	if _ring.get_parent() != node:
@@ -118,6 +122,7 @@ func select_joint(jname: String) -> void:
 func deselect() -> void:
 	_selected = ""
 	_dragging = false
+	_armed = false
 	_ring.visible = false
 	_marker.visible = false
 	_label.visible = false
@@ -127,6 +132,18 @@ func set_editable(on: bool) -> void:
 	_editable = on
 	if not on:
 		deselect()
+
+
+# "Point" arm-edit: aktifkan/nonaktifkan kemampuan memutar joint terpilih.
+func set_armed(on: bool) -> void:
+	_armed = on
+	# warnai ring: hijau-armed vs cyan-locked, biar jelas statusnya
+	if _ring_mat:
+		_ring_mat.albedo_color = Color(0.30, 0.95, 0.45) if on else COL_RING
+
+
+func is_armed() -> bool:
+	return _armed
 
 
 func get_selected() -> String:
@@ -146,16 +163,21 @@ func _input(event: InputEvent) -> void:
 
 	if event is InputEventMouseButton and event.button_index == MOUSE_BUTTON_LEFT:
 		if event.pressed:
-			# 1) sudah ada joint terpilih & klik dekat ring -> langsung putar
+			# 1) sudah ada joint terpilih & klik dekat ring -> putar HANYA bila
+			#    sudah di-arm ("point" ditekan); kalau belum, cuma tampilkan popup.
 			if _selected != "" and _near_selected(event.position):
-				_begin_drag(event.position)
+				if _armed:
+					_begin_drag(event.position)
+				else:
+					servo_clicked.emit(_selected)
 				get_viewport().set_input_as_handled()
 			else:
-				# 2) klik langsung di mesh servo -> pilih joint itu lalu putar
+				# 2) klik langsung di mesh servo -> pilih + tampilkan popup detail.
+				#    Belum bisa diputar sampai di-arm dari popup (anti salah ubah).
 				var jn := _raycast_joint(event.position)
 				if jn != "":
-					select_joint(jn)
-					_begin_drag(event.position)
+					select_joint(jn)            # reset arm (keamanan)
+					servo_clicked.emit(jn)
 					get_viewport().set_input_as_handled()
 				else:
 					# 3) klik area kosong -> sembunyikan ring (tak menghalangi

@@ -97,10 +97,39 @@ var _updating_ui := false    # cegah feedback loop slider<->robot
 var _active_slider := ""     # joint yang slidernya sedang diseret user
 var _sel_joint := ""         # joint terpilih (untuk highlight)
 
+# Popup detail servo (ala Dynamixel Wizard) — muncul saat servo diklik di 3D
+var _servo_popup: PopupPanel
+var _popup_joint := ""
+var _popup_lbls := {}        # key => Label nilai
+var _popup_title: Label
+var _popup_arm_btn: Button
+
 var fps_lbl: Label
 var latency_lbl: Label
 var uptime_lbl: Label
 var mode_lbl: Label
+
+# btop-style system monitor (Intel NUC onboard). Bars + per-core strip. Values
+# are mocked with believable NUC dynamics; if /dt/system arrives over rosbridge
+# call set_system_stats() to drive them from the real machine.
+const NUC_CORES := 8
+const NUC_RAM_GB := 16.0
+const NUC_DISK_GB := 256.0
+var sys_cpu_bar: ProgressBar
+var sys_cpu_lbl: Label
+var sys_core_bars: Array = []          # per-core ProgressBar
+var sys_ram_bar: ProgressBar
+var sys_ram_lbl: Label
+var sys_disk_bar: ProgressBar
+var sys_disk_lbl: Label
+var sys_cputemp_lbl: Label
+var sys_net_lbl: Label
+var sys_nuc_uptime_lbl: Label
+var _sys_external := false              # true once real /dt/system data arrives
+var _sys := {                          # live values (mocked until external)
+	"cpu": 22.0, "cores": [], "ram": 38.0, "disk": 47.0,
+	"cputemp": 52.0, "net_rx": 1.2, "net_tx": 0.4, "nuc_uptime": 0,
+}
 
 # State mockup
 var _start_time_ms := 0
@@ -946,6 +975,9 @@ func bind_controls(robot: Node3D, manipulator: Node) -> void:
 	_manip_ref = manipulator
 	if manipulator and manipulator.has_signal("joint_rotated"):
 		manipulator.joint_rotated.connect(_on_manip_rotated)
+	if manipulator and manipulator.has_signal("servo_clicked"):
+		manipulator.servo_clicked.connect(_on_servo_clicked)
+	_build_servo_popup()
 
 	# Set rentang + nilai awal tiap slider (guard agar tak menulis balik ke robot)
 	if robot and robot.has_method("get_joint_limit"):
@@ -1010,6 +1042,199 @@ func _on_joint_clicked(jname: String) -> void:
 	_highlight_selected(jname)
 
 
+# ----------------------------------------------------------------------------
+# Popup detail servo (ala Dynamixel Wizard)
+# ----------------------------------------------------------------------------
+const POPUP_ROWS := [
+	["pos",   "Present Position"],
+	["goal",  "Goal Position"],
+	["temp",  "Present Temperature"],
+	["load",  "Present Load (torque)"],
+	["fatig", "Fatigue (duty est.)"],
+	["volt",  "Present Voltage"],
+	["err",   "Hardware Error"],
+	["move",  "Moving"],
+	["health","Health"],
+]
+
+func _build_servo_popup() -> void:
+	if _servo_popup:
+		return
+	_servo_popup = PopupPanel.new()
+	var pb := StyleBoxFlat.new()
+	pb.bg_color = Color(0.13, 0.14, 0.18)
+	pb.border_color = Color(0.30, 0.85, 0.95)
+	pb.set_border_width_all(1)
+	pb.set_corner_radius_all(10)
+	pb.set_content_margin_all(14)
+	_servo_popup.add_theme_stylebox_override("panel", pb)
+
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 6)
+	vb.custom_minimum_size = Vector2(248, 0)
+	_servo_popup.add_child(vb)
+
+	_popup_title = Label.new()
+	_popup_title.add_theme_font_size_override("font_size", 14)
+	_popup_title.add_theme_color_override("font_color", Color(0.55, 0.92, 1.0))
+	var bf := _bold_font()
+	if bf: _popup_title.add_theme_font_override("font", bf)
+	vb.add_child(_popup_title)
+
+	var sub := Label.new()
+	sub.name = "sub"
+	sub.add_theme_font_size_override("font_size", 10)
+	sub.add_theme_color_override("font_color", Color(0.62, 0.66, 0.74))
+	vb.add_child(sub)
+
+	var sep := HSeparator.new()
+	vb.add_child(sep)
+
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 14)
+	grid.add_theme_constant_override("v_separation", 5)
+	vb.add_child(grid)
+	for row in POPUP_ROWS:
+		var k := Label.new()
+		k.text = row[1]
+		k.add_theme_font_size_override("font_size", 11)
+		k.add_theme_color_override("font_color", Color(0.66, 0.70, 0.78))
+		grid.add_child(k)
+		var v := Label.new()
+		v.text = "—"
+		v.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+		v.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		v.add_theme_font_size_override("font_size", 11)
+		v.add_theme_color_override("font_color", Color(0.90, 0.93, 0.97))
+		grid.add_child(v)
+		_popup_lbls[row[0]] = v
+
+	var sep2 := HSeparator.new()
+	vb.add_child(sep2)
+
+	# baris tombol: ARM (point) + Reset
+	var btns := HBoxContainer.new()
+	btns.add_theme_constant_override("separation", 8)
+	vb.add_child(btns)
+
+	_popup_arm_btn = Button.new()
+	_popup_arm_btn.focus_mode = Control.FOCUS_NONE
+	_popup_arm_btn.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_popup_arm_btn.tooltip_text = "Tekan dulu untuk meng-ARM servo ini sebelum sudutnya bisa diubah (anti salah ubah)"
+	_popup_arm_btn.pressed.connect(_on_popup_arm)
+	btns.add_child(_popup_arm_btn)
+
+	var reset_b := Button.new()
+	reset_b.text = "↺ Reset"
+	reset_b.focus_mode = Control.FOCUS_NONE
+	reset_b.tooltip_text = "Kembalikan servo ini ke pose default"
+	reset_b.pressed.connect(func():
+		if _popup_joint != "" and _robot_ref and _robot_ref.has_method("reset_joint"):
+			_robot_ref.reset_joint(_popup_joint))
+	btns.add_child(reset_b)
+
+	add_child(_servo_popup)
+
+
+func _on_servo_clicked(jname: String) -> void:
+	_popup_joint = jname
+	_highlight_selected(jname)
+	_refresh_servo_popup()
+	_refresh_arm_btn()
+	_servo_popup.reset_size()
+	# tempatkan dekat kursor tapi tetap di dalam layar
+	var mp := get_viewport().get_mouse_position()
+	_servo_popup.position = Vector2i(mp + Vector2(18, 12))
+	_servo_popup.popup()
+
+
+func _on_popup_arm() -> void:
+	if _manip_ref == null or _popup_joint == "":
+		return
+	# pastikan joint ini yang terpilih, lalu toggle arm
+	if _manip_ref.has_method("select_joint") and _manip_ref.get_selected() != _popup_joint:
+		_manip_ref.select_joint(_popup_joint)
+	var now := false
+	if _manip_ref.has_method("is_armed"):
+		now = _manip_ref.is_armed()
+	if _manip_ref.has_method("set_armed"):
+		_manip_ref.set_armed(not now)
+	_refresh_arm_btn()
+
+
+func _refresh_arm_btn() -> void:
+	if _popup_arm_btn == null:
+		return
+	var armed := false
+	if _manip_ref and _manip_ref.has_method("is_armed") \
+			and _manip_ref.get_selected() == _popup_joint:
+		armed = _manip_ref.is_armed()
+	if armed:
+		_popup_arm_btn.text = "● ARMED — bisa diputar"
+		_popup_arm_btn.add_theme_color_override("font_color", Color(0.30, 0.95, 0.45))
+	else:
+		_popup_arm_btn.text = "○ ARM EDIT (tekan)"
+		_popup_arm_btn.add_theme_color_override("font_color", Color(0.97, 0.80, 0.46))
+
+
+func _refresh_servo_popup() -> void:
+	if _servo_popup == null or not _servo_popup.visible or _popup_joint == "":
+		return
+	var jn := _popup_joint
+	var r := _robot_ref
+	var deg := 0.0
+	if r and r.has_method("get_joint_angle"):
+		deg = rad_to_deg(r.get_joint_angle(jn))
+	var tick := int(round(deg * 4096.0 / 360.0)) + 2048
+	var sid := 0
+	var part := ""
+	if r and r.has_method("get_servo_id"): sid = r.get_servo_id(jn)
+	if r and r.has_method("get_servo_part"): part = r.get_servo_part(jn)
+	_popup_title.text = "ID %d · %s" % [sid, jn]
+	var sub: Label = _servo_popup.get_child(0).get_node("sub")
+	if sub:
+		sub.text = "Dynamixel %s · %s" % [
+			(r.SERVO_MODEL if r else "XM-430-W350"), part]
+
+	# mock telemetri yang masuk akal (hingga /dt ada datanya betulan)
+	var t := Time.get_ticks_msec() / 1000.0
+	var idx := float(JOINT_NAMES.find(jn))
+	var temp := _temp_base + sin(t * 0.3 + idx * 0.2) * 2.5
+	var loadp := clampf(absf(deg) * 0.35 + sin(t * 1.2 + idx) * 6.0, 0.0, 100.0)
+	var fatig := clampf(absf(deg) * 0.5 + (idx * 1.7), 0.0, 100.0)
+	var volt := 11.7 + sin(t * 0.5 + idx) * 0.15
+	var health := "ok"
+	if r and r.has_method("get_servo_health"): health = r.get_servo_health(jn)
+	var err := "None (0x00)"
+	if health == "fault": err = "Overload/Temp (0x20)"
+	elif health == "warn": err = "Near limit"
+
+	_popup_lbls["pos"].text   = "%+.1f°  (%d)" % [deg, tick]
+	_popup_lbls["goal"].text  = "%+.1f°" % deg
+	_popup_lbls["temp"].text  = "%.0f °C" % temp
+	_popup_lbls["load"].text  = "%.0f %%" % loadp
+	_popup_lbls["fatig"].text = "%.0f %%" % fatig
+	_popup_lbls["volt"].text  = "%.2f V" % volt
+	_popup_lbls["err"].text   = err
+	_popup_lbls["move"].text  = "Yes" if (r and r.has_method("get_joint_angle")) else "No"
+	_popup_lbls["health"].text = health.to_upper()
+
+	# warnai nilai kritis
+	_color_val(_popup_lbls["temp"], temp, 45.0, 55.0)
+	_color_val(_popup_lbls["load"], loadp, 60.0, 85.0)
+	_color_val(_popup_lbls["fatig"], fatig, 60.0, 85.0)
+	_popup_lbls["health"].add_theme_color_override("font_color",
+		Color(0.95, 0.30, 0.30) if health == "fault" else
+		(Color(0.97, 0.75, 0.20) if health == "warn" else Color(0.40, 0.90, 0.55)))
+
+
+func _color_val(lbl: Label, v: float, warn: float, crit: float) -> void:
+	lbl.add_theme_color_override("font_color",
+		Color(0.95, 0.30, 0.30) if v >= crit else
+		(Color(0.97, 0.75, 0.20) if v >= warn else Color(0.90, 0.93, 0.97)))
+
+
 func _on_slider_changed(value: float, jname: String) -> void:
 	if _updating_ui:
 		return
@@ -1051,17 +1276,57 @@ func _make_th(parent: Container, text: String) -> void:
 # 5) SYSTEM SECTION
 # ----------------------------------------------------------------------------
 func _build_system_section() -> PanelContainer:
-	var content := _make_card("System", PAS_AMBER)
+	var content := _make_card("System · Intel NUC (btop)", PAS_AMBER)
 
+	# --- CPU total + per-core strip --------------------------------------
+	var cpu_head := HBoxContainer.new()
+	cpu_head.add_theme_constant_override("separation", 8)
+	var cpu_cap := Label.new()
+	cpu_cap.text = "CPU"
+	cpu_cap.add_theme_font_size_override("font_size", 11)
+	cpu_cap.add_theme_color_override("font_color", Color(0.45, 0.43, 0.55))
+	cpu_cap.custom_minimum_size = Vector2(42, 0)
+	cpu_head.add_child(cpu_cap)
+	sys_cpu_bar = _mk_bar(PAS_SKY)
+	sys_cpu_bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cpu_head.add_child(sys_cpu_bar)
+	sys_cpu_lbl = _mk_val("22%")
+	cpu_head.add_child(sys_cpu_lbl)
+	content.add_child(cpu_head)
+
+	# per-core mini bars (btop signature)
+	var cores := GridContainer.new()
+	cores.columns = 4
+	cores.add_theme_constant_override("h_separation", 6)
+	cores.add_theme_constant_override("v_separation", 4)
+	for i in NUC_CORES:
+		var cb := _mk_bar(PAS_PURPLE)
+		cb.custom_minimum_size = Vector2(0, 7)
+		cb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		sys_core_bars.append(cb)
+		cores.add_child(cb)
+		_sys["cores"].append(18.0 + i * 3.0)
+	content.add_child(cores)
+
+	# --- RAM -------------------------------------------------------------
+	content.add_child(_mk_usage_row("RAM", PAS_MINT, func(b, l):
+		sys_ram_bar = b; sys_ram_lbl = l))
+	# --- Disk ------------------------------------------------------------
+	content.add_child(_mk_usage_row("Disk", PAS_AMBER, func(b, l):
+		sys_disk_bar = b; sys_disk_lbl = l))
+
+	# --- numeric grid ----------------------------------------------------
 	var grid := GridContainer.new()
 	grid.columns = 2
 	grid.add_theme_constant_override("h_separation", 16)
 	grid.add_theme_constant_override("v_separation", 4)
 	content.add_child(grid)
-
-	fps_lbl     = _add_kv(grid, "FPS", "60")
+	sys_cputemp_lbl   = _add_kv(grid, "CPU temp", "52°C")
+	sys_net_lbl       = _add_kv(grid, "Net ↓↑", "1.2 / 0.4 MB/s")
+	sys_nuc_uptime_lbl = _add_kv(grid, "NUC uptime", "00:00:00")
+	fps_lbl     = _add_kv(grid, "Twin FPS", "60")
 	latency_lbl = _add_kv(grid, "Latency", "8.2 ms")
-	uptime_lbl  = _add_kv(grid, "Uptime", "00:00:00")
+	uptime_lbl  = _add_kv(grid, "Twin uptime", "00:00:00")
 	_add_kv(grid, "Health topic", "/dt/servo_health")
 
 	var st := Button.new()
@@ -1072,6 +1337,61 @@ func _build_system_section() -> PanelContainer:
 	content.add_child(st)
 
 	return content.get_meta("card_panel")
+
+
+# progress bar mungil bergaya btop (tanpa teks bawaan)
+func _mk_bar(fill: Color) -> ProgressBar:
+	var bar := ProgressBar.new()
+	bar.min_value = 0; bar.max_value = 100; bar.value = 20
+	bar.show_percentage = false
+	bar.custom_minimum_size = Vector2(0, 12)
+	var bg := StyleBoxFlat.new()
+	bg.bg_color = Color(0.92, 0.91, 0.95)
+	bg.corner_radius_top_left = 6; bg.corner_radius_top_right = 6
+	bg.corner_radius_bottom_left = 6; bg.corner_radius_bottom_right = 6
+	bar.add_theme_stylebox_override("background", bg)
+	var fg := StyleBoxFlat.new()
+	fg.bg_color = fill
+	fg.corner_radius_top_left = 6; fg.corner_radius_top_right = 6
+	fg.corner_radius_bottom_left = 6; fg.corner_radius_bottom_right = 6
+	bar.add_theme_stylebox_override("fill", fg)
+	return bar
+
+
+func _mk_val(txt: String) -> Label:
+	var l := Label.new()
+	l.text = txt
+	l.custom_minimum_size = Vector2(54, 0)
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_RIGHT
+	l.add_theme_font_size_override("font_size", 11)
+	l.add_theme_color_override("font_color", Color(0.40, 0.38, 0.50))
+	return l
+
+
+func _mk_usage_row(caption: String, fill: Color, bind: Callable) -> HBoxContainer:
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 8)
+	var cap := Label.new()
+	cap.text = caption
+	cap.add_theme_font_size_override("font_size", 11)
+	cap.add_theme_color_override("font_color", Color(0.45, 0.43, 0.55))
+	cap.custom_minimum_size = Vector2(42, 0)
+	row.add_child(cap)
+	var bar := _mk_bar(fill)
+	bar.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	row.add_child(bar)
+	var lbl := _mk_val("")
+	row.add_child(lbl)
+	bind.call(bar, lbl)
+	return row
+
+
+# Dipanggil dari Main saat data sistem nyata tiba (/dt/system over rosbridge).
+# d: {cpu, cores:[..], ram, disk, cputemp, net_rx, net_tx, nuc_uptime}
+func set_system_stats(d: Dictionary) -> void:
+	_sys_external = true
+	for k in d:
+		_sys[k] = d[k]
 
 
 func _on_self_test() -> void:
@@ -1161,9 +1481,19 @@ func update_from_robot(robot: Node3D) -> void:
 	# Current draw (sedikit ber-fluktuasi)
 	battery_current_lbl.text = "%.2f A" % (1.4 + sin(t * 2.0) * 0.15)
 
-	# 4. System info
+	# 4. System info (Twin process)
 	fps_lbl.text = "%d" % Engine.get_frames_per_second()
 	latency_lbl.text = "%.1f ms" % (1000.0 / max(1, Engine.get_frames_per_second()))
+
+	# 4b. btop-style NUC monitor. Mock realistic drift unless real data arrives.
+	if not _sys_external:
+		_mock_system(t)
+	_refresh_system_bars()
+
+	# 4c. Popup detail servo tetap hidup selama terbuka
+	if _servo_popup and _servo_popup.visible:
+		_refresh_servo_popup()
+		_refresh_arm_btn()
 
 	# Stat strip atas
 	if stat_batt:
@@ -1199,6 +1529,75 @@ func update_from_robot(robot: Node3D) -> void:
 				lbl.add_theme_color_override("font_color", Color(1.0, 0.85, 0.3))
 			else:
 				lbl.add_theme_color_override("font_color", Color(0.16, 0.56, 0.47))
+
+
+# Mock NUC telemetry — believable drift (load couples to robot motion a bit).
+func _mock_system(t: float) -> void:
+	# how busy the robot is right now nudges CPU/temp up
+	var motion := 0.0
+	if _robot_ref and _robot_ref.has_method("get_joint_angle"):
+		for jn in JOINT_NAMES:
+			motion += absf(_robot_ref.get_joint_angle(jn))
+	var busy: float = clampf(motion * 0.4, 0.0, 35.0)
+	_sys["cpu"] = clampf(20.0 + sin(t * 0.7) * 6.0 + busy, 3.0, 99.0)
+	for i in _sys["cores"].size():
+		var base: float = _sys["cpu"]
+		_sys["cores"][i] = clampf(base + sin(t * (1.1 + i * 0.3) + i) * 22.0, 1.0, 100.0)
+	_sys["ram"] = clampf(36.0 + sin(t * 0.15) * 4.0, 5.0, 95.0)
+	_sys["disk"] = 47.0
+	_sys["cputemp"] = clampf(48.0 + busy * 0.5 + sin(t * 0.4) * 2.5, 35.0, 95.0)
+	_sys["net_rx"] = 1.0 + absf(sin(t * 1.3)) * 1.8
+	_sys["net_tx"] = 0.3 + absf(cos(t * 0.9)) * 0.6
+	_sys["nuc_uptime"] = int(Time.get_unix_time_from_system()) % 86400
+
+
+func _refresh_system_bars() -> void:
+	if sys_cpu_bar == null:
+		return
+	var cpu: float = _sys["cpu"]
+	sys_cpu_bar.value = cpu
+	sys_cpu_lbl.text = "%.0f%%" % cpu
+	_tint_bar(sys_cpu_bar, sys_cpu_lbl, cpu, PAS_SKY)
+	for i in mini(sys_core_bars.size(), _sys["cores"].size()):
+		var cv: float = _sys["cores"][i]
+		sys_core_bars[i].value = cv
+		_tint_bar(sys_core_bars[i], null, cv, PAS_PURPLE)
+
+	var ram: float = _sys["ram"]
+	sys_ram_bar.value = ram
+	sys_ram_lbl.text = "%.1f/%.0f GB" % [ram / 100.0 * NUC_RAM_GB, NUC_RAM_GB]
+	_tint_bar(sys_ram_bar, null, ram, PAS_MINT)
+
+	var disk: float = _sys["disk"]
+	sys_disk_bar.value = disk
+	sys_disk_lbl.text = "%.0f/%.0f GB" % [disk / 100.0 * NUC_DISK_GB, NUC_DISK_GB]
+	_tint_bar(sys_disk_bar, null, disk, PAS_AMBER)
+
+	var ct: float = _sys["cputemp"]
+	sys_cputemp_lbl.text = "%.0f°C" % ct
+	sys_cputemp_lbl.add_theme_color_override("font_color",
+		Color(0.95, 0.30, 0.30) if ct > 80.0 else
+		(Color(0.95, 0.65, 0.20) if ct > 70.0 else Color(0.40, 0.38, 0.50)))
+	sys_net_lbl.text = "%.1f / %.1f MB/s" % [_sys["net_rx"], _sys["net_tx"]]
+	var us: int = int(_sys["nuc_uptime"])
+	@warning_ignore("integer_division")
+	sys_nuc_uptime_lbl.text = "%02d:%02d:%02d" % [us / 3600, (us / 60) % 60, us % 60]
+
+
+# warnai fill bar: hijau<60, kuning<85, merah>=85
+func _tint_bar(bar: ProgressBar, lbl, v: float, normal: Color) -> void:
+	var c: Color = normal
+	if v >= 85.0:
+		c = Color(0.95, 0.30, 0.30)
+	elif v >= 60.0:
+		c = Color(0.95, 0.65, 0.20)
+	var fg: StyleBoxFlat = bar.get_theme_stylebox("fill")
+	if fg and fg.bg_color != c:
+		fg = fg.duplicate()
+		fg.bg_color = c
+		bar.add_theme_stylebox_override("fill", fg)
+	if lbl:
+		lbl.add_theme_color_override("font_color", c if v >= 60.0 else Color(0.40, 0.38, 0.50))
 
 
 # Helper konversi (Godot punya rad_to_deg di 4.x, tapi kita pakai versi manual
