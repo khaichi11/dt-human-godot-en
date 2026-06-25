@@ -18,6 +18,8 @@ extends Node
 signal status_changed(state: String)          # "connecting" | "open" | "closed"
 signal joints_received(joints: Dictionary)     # nama_joint -> radian
 signal health_received(health: Dictionary)     # nama_joint -> "ok"|"warn"|"fault"
+signal vision_received(detections: Array)      # [{label, conf, rect:Rect2 0..1}]
+signal camera_received(tex: Texture2D)         # frame kamera kepala (JPEG decode)
 
 const SUB_TOPIC := "/robotis/present_joint_states"
 const SUB_TYPE  := "sensor_msgs/msg/JointState"
@@ -25,6 +27,13 @@ const SUB_TYPE  := "sensor_msgs/msg/JointState"
 # dari Dynamixel Protocol 2.0 lalu publish). msg: {name:[...], level:[0|1|2]}.
 const HEALTH_TOPIC := "/dt/servo_health"
 const HEALTH_TYPE  := "std_msgs/msg/String"   # JSON di field data, atau name/level
+# Computer vision: node YOLO di robot publish hasil deteksi (JSON) + frame kamera
+# terkompresi. Twin meng-overlay box-nya secara realtime di panel CV.
+const VISION_TOPIC := "/dt/vision/detections"  # std_msgs/String JSON:
+#   {"w":640,"h":480,"det":[{"label":"ball","conf":0.94,"rect":[x,y,w,h]}]}  (rect ternormalisasi 0..1)
+const VISION_TYPE  := "std_msgs/msg/String"
+const CAM_TOPIC := "/usb_cam/image_raw/compressed"
+const CAM_TYPE  := "sensor_msgs/msg/CompressedImage"  # field data = base64 JPEG
 const CMD_TOPIC := "/robotis/set_joint_states"
 const CMD_TYPE  := "sensor_msgs/msg/JointState"
 const RECONNECT_SEC := 3.0
@@ -69,6 +78,8 @@ func _process(delta: float) -> void:
 			if not _subscribed:
 				_send({"op": "subscribe", "topic": SUB_TOPIC, "type": SUB_TYPE})
 				_send({"op": "subscribe", "topic": HEALTH_TOPIC, "type": HEALTH_TYPE})
+				_send({"op": "subscribe", "topic": VISION_TOPIC, "type": VISION_TYPE})
+				_send({"op": "subscribe", "topic": CAM_TOPIC, "type": CAM_TYPE})
 				_subscribed = true
 				emit_signal("status_changed", "open")
 			while _ws.get_available_packet_count() > 0:
@@ -101,6 +112,12 @@ func _handle_message(text: String) -> void:
 	if topic == HEALTH_TOPIC:
 		_handle_health(data.get("msg", {}))
 		return
+	if topic == VISION_TOPIC:
+		_handle_vision(data.get("msg", {}))
+		return
+	if topic == CAM_TOPIC:
+		_handle_camera(data.get("msg", {}))
+		return
 	if topic != SUB_TOPIC:
 		return
 	var msg: Dictionary = data.get("msg", {})
@@ -127,6 +144,46 @@ func _handle_health(msg: Dictionary) -> void:
 		out[String(names[i])] = "fault" if lv >= 2 else ("warn" if lv == 1 else "ok")
 	if not out.is_empty():
 		emit_signal("health_received", out)
+
+
+# Hasil deteksi YOLO (std_msgs/String, field data = JSON). rect ternormalisasi.
+func _handle_vision(msg: Dictionary) -> void:
+	var payload = msg
+	if msg.has("data"):
+		var parsed = JSON.parse_string(String(msg["data"]))
+		if typeof(parsed) == TYPE_DICTIONARY:
+			payload = parsed
+	var det_in: Array = payload.get("det", [])
+	var out: Array = []
+	for d in det_in:
+		if typeof(d) != TYPE_DICTIONARY:
+			continue
+		var r: Array = d.get("rect", [])
+		if r.size() < 4:
+			continue
+		out.append({
+			"label": String(d.get("label", "obj")),
+			"conf": float(d.get("conf", 0.0)),
+			"rect": Rect2(float(r[0]), float(r[1]), float(r[2]), float(r[3])),
+		})
+	emit_signal("vision_received", out)
+
+
+# Frame kamera terkompresi (sensor_msgs/CompressedImage). field data = base64 JPEG.
+func _handle_camera(msg: Dictionary) -> void:
+	var b64 := String(msg.get("data", ""))
+	if b64.is_empty():
+		return
+	var bytes := Marshalls.base64_to_raw(b64)
+	if bytes.is_empty():
+		return
+	var img := Image.new()
+	var err := img.load_jpg_from_buffer(bytes)
+	if err != OK:
+		err = img.load_png_from_buffer(bytes)
+	if err != OK:
+		return
+	emit_signal("camera_received", ImageTexture.create_from_image(img))
 
 
 # Kirim perintah joint ke robot (arah operator -> robot).

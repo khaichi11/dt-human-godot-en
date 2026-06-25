@@ -430,6 +430,18 @@ func _on_ros_joints(joints: Dictionary) -> void:
 		robot.set_joint_angle(jname, joints[jname])
 
 
+func _on_ros_vision(detections: Array) -> void:
+	# Hasil YOLO dari robot -> overlay box realtime di panel CV
+	if sensor_panel and sensor_panel.has_method("set_detections"):
+		sensor_panel.set_detections(detections)
+
+
+func _on_ros_camera(tex: Texture2D) -> void:
+	# Frame kamera kepala -> tampilkan di panel CV
+	if sensor_panel and sensor_panel.has_method("set_camera_frame"):
+		sensor_panel.set_camera_frame(tex)
+
+
 func _on_ros_health(health: Dictionary) -> void:
 	# Status servo dari robot -> kedipkan link yang bermasalah + tandai di panel
 	if robot:
@@ -553,6 +565,8 @@ func _build_3d_scene() -> void:
 	ros_bridge.status_changed.connect(_on_ros_status)
 	ros_bridge.joints_received.connect(_on_ros_joints)
 	ros_bridge.health_received.connect(_on_ros_health)
+	ros_bridge.vision_received.connect(_on_ros_vision)
+	ros_bridge.camera_received.connect(_on_ros_camera)
 
 
 func _add_dir_light(rot_deg: Vector3, energy: float, color: Color, shadow := false) -> void:

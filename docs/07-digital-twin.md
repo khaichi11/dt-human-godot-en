@@ -48,17 +48,17 @@ So when the live link is down, the app is honest about it: it shows
 | **Interfacing** | rosbridge / ROS 2 | `RosBridge.gd`; `/robotis/present_joint_states`, `/dt/servo_health` |
 | **Virtual** | — | the Godot twin: 3D rig, dashboard, pose authoring |
 
-The DT hero card at the top of the panel renders exactly this flow
-(`PHYSICAL → LINK → VIRTUAL`) and a live **SYNCHRONIZED / SIMULATION** badge.
+This three-layer flow is the architecture; the **toolbar link dot** and the
+**MODE** button surface its live state to the operator. The conceptual write-up
+is kept here in the docs rather than as a panel card.
 
 ## Synchronization — the property made visible
 
 `SensorPanel.set_sync_state(connected, latency_ms)` is called by `Main.gd` every
 time a joint packet arrives over rosbridge (`_on_ros_joints`) and when the socket
 closes (`_on_ros_status`). Each packet is evidence the twin is mirroring the
-physical asset, so the hero card shows **SYNCHRONIZED · latency N ms**. With no
-packets it falls back to **SIMULATION** (virtual model only). This is the
-paper's DT-vs-simulation distinction, surfaced in the UI.
+physical asset (**SYNCHRONIZED**); with no packets it is **SIMULATION** (virtual
+model only) — the paper's DT-vs-simulation distinction.
 
 ## Information flow is bi-directional
 
@@ -80,6 +80,22 @@ a DT. Here it is concrete:
 - The servo popup (click a servo) shows load, temperature and a fatigue estimate,
   Dynamixel-Wizard style — health you can act on.
 
+## Computer vision — the robot's perception, mirrored
+
+The OP3 plays soccer, so perception is part of its state. The **Computer Vision**
+card mirrors the head camera and overlays the robot's **YOLO ball detection** in
+real time: bounding box, label and confidence, drawn on the live frame.
+
+- Robot side: a YOLO node publishes `/dt/vision/detections` (JSON: normalized
+  boxes) and `/usb_cam/image_raw/compressed` (JPEG). `RosBridge.gd` decodes both
+  and emits `vision_received` / `camera_received`; `Main` forwards them to
+  `SensorPanel.set_detections()` / `set_camera_frame()`.
+- No robot? A **demo** animates a tracked ball on a pitch so the detection look
+  can be previewed live (toggle with the *Demo* button).
+
+This makes the twin reflect not just the body but what the robot *sees* —
+extending the mirror from actuators/sensors to perception.
+
 ## DT performance / evaluation
 
 The btop-style **System · Intel NUC** card and the **Twin FPS / Latency** read-
@@ -92,7 +108,7 @@ the physical asset in real time.
 1. **Connect** the twin to the robot (rosbridge URL → Connect). Link state
    becomes **SYNCHRONIZED**.
 2. **MIMIC (LIVE):** watch the twin mirror the robot — joints, IMU, battery,
-   servo health, NUC load.
+   servo health, NUC load, and the head-camera view with live YOLO detections.
 3. **Diagnose (PHM):** a degrading servo blinks red on its body; click it for
    load/temperature/fatigue.
 4. **AUTHOR (ATUR):** switch mode, arm a servo, rotate it, capture steps, save a

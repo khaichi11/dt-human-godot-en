@@ -78,9 +78,89 @@ class Sparkline extends Control:
 		draw_polyline(pts, lc, 2.0, true)
 
 
+# Camera viewport with a YOLO-style detection overlay. Renders a real frame
+# (`tex`) + real boxes (`detections`) when fed by the robot; otherwise animates
+# a soccer-field demo with a tracked ball so the look can be previewed live.
+class VisionFeed extends Control:
+	var tex: Texture2D = null
+	var detections: Array = []          # [{label, conf, rect:Rect2 normalized 0..1}]
+	var demo := true
+	var _t := 0.0
+	var _ball := Vector2(0.5, 0.5)      # normalized ball centre
+
+	func _process(delta: float) -> void:
+		if not demo:
+			return
+		_t += delta
+		# ball wanders the pitch (lissajous) — looks like live tracking
+		_ball.x = 0.50 + 0.34 * sin(_t * 0.7)
+		_ball.y = 0.56 + 0.20 * sin(_t * 1.13 + 1.0)
+		var conf := 0.86 + 0.10 * absf(sin(_t * 2.0))
+		var bw := 0.16 + 0.015 * sin(_t * 3.0)
+		var bh: float = bw * (size.x / max(size.y, 1.0))
+		detections = [{
+			"label": "ball",
+			"conf": conf,
+			"rect": Rect2(_ball.x - bw * 0.5, _ball.y - bh * 0.5, bw, bh),
+		}]
+		queue_redraw()
+
+	func _draw() -> void:
+		var w := size.x
+		var h := size.y
+		if w <= 0 or h <= 0:
+			return
+		# --- background: real frame, else a green "pitch" so demo reads as a feed
+		if tex != null:
+			draw_texture_rect(tex, Rect2(Vector2.ZERO, size), false)
+		else:
+			draw_rect(Rect2(Vector2.ZERO, size), Color(0.16, 0.42, 0.22))
+			draw_rect(Rect2(Vector2.ZERO, size), Color(0.20, 0.50, 0.26), false, 2.0)
+			# centre line + circle (football field cue)
+			draw_line(Vector2(0, h * 0.5), Vector2(w, h * 0.5), Color(1, 1, 1, 0.25), 1.0)
+			draw_arc(Vector2(w * 0.5, h * 0.5), min(w, h) * 0.16, 0, TAU, 32, Color(1, 1, 1, 0.22), 1.0)
+			if demo:
+				# draw the ball itself (orange) at its tracked spot
+				var bc := Vector2(_ball.x * w, _ball.y * h)
+				draw_circle(bc, min(w, h) * 0.05, Color(0.98, 0.55, 0.12))
+				draw_arc(bc, min(w, h) * 0.05, 0, TAU, 20, Color(0.6, 0.25, 0.05), 1.5)
+
+		# --- YOLO detection boxes + labels
+		var font := ThemeDB.fallback_font
+		for d in detections:
+			var r: Rect2 = d.get("rect", Rect2())
+			var px := Rect2(r.position.x * w, r.position.y * h, r.size.x * w, r.size.y * h)
+			var col := Color(0.20, 0.95, 0.55)          # YOLO green
+			draw_rect(px, col, false, 2.0)
+			# label chip
+			var txt := "%s %d%%" % [d.get("label", "?"), int(d.get("conf", 0.0) * 100.0)]
+			var ts := font.get_string_size(txt, HORIZONTAL_ALIGNMENT_LEFT, -1, 12)
+			var lbl_bg := Rect2(px.position - Vector2(0, 15), Vector2(ts.x + 8, 15))
+			draw_rect(lbl_bg, col)
+			draw_string(font, px.position + Vector2(4, -3), txt,
+				HORIZONTAL_ALIGNMENT_LEFT, -1, 12, Color(0.05, 0.12, 0.06))
+
+		# --- HUD: crosshair + REC dot so it reads as a vision system
+		draw_line(Vector2(w * 0.5 - 8, h * 0.5), Vector2(w * 0.5 + 8, h * 0.5), Color(1, 1, 1, 0.3), 1.0)
+		draw_line(Vector2(w * 0.5, h * 0.5 - 8), Vector2(w * 0.5, h * 0.5 + 8), Color(1, 1, 1, 0.3), 1.0)
+		var live := demo or tex != null
+		draw_circle(Vector2(12, 12), 4, Color(0.95, 0.25, 0.25) if live else Color(0.5, 0.5, 0.5))
+		draw_string(ThemeDB.fallback_font, Vector2(22, 16),
+			"LIVE" if live else "NO SIGNAL", HORIZONTAL_ALIGNMENT_LEFT, -1, 11,
+			Color(1, 1, 1, 0.8))
+
+
 var graph_spark: Sparkline
 var graph_lbl: Label
 var sys_cpu_graph: Sparkline   # btop-style CPU history area graph
+
+# Computer-vision (head camera + YOLO) panel
+var cv_feed: VisionFeed
+var cv_model_lbl: Label
+var cv_res_lbl: Label
+var cv_fps_lbl: Label
+var cv_det_lbl: Label
+var cv_demo_btn: Button
 
 # Referensi node yang dibuat dinamis agar bisa di-update tiap frame
 var battery_bar: ProgressBar
@@ -202,11 +282,11 @@ func _build() -> void:
 	col.add_theme_constant_override("separation", 12)
 	pad.add_child(col)
 
-	# Order follows the digital-twin flow: identity/sync -> KPIs -> MONITOR the
-	# physical asset (compute, power, sensors, joints, trend) -> CONTROL/author.
-	col.add_child(_build_dt_hero())                    # what a DT is + live sync
+	# Order follows the digital-twin flow: MONITOR the physical asset
+	# (vision, compute, power, sensors, joints, trend) -> CONTROL/author.
 	col.add_child(_section_label("MONITORING — physical asset"))
 	col.add_child(_build_stat_strip())
+	col.add_child(_build_vision_section())             # head camera + YOLO
 	col.add_child(_build_system_section())
 	col.add_child(_build_battery_section())
 	col.add_child(_build_imu_section())
@@ -383,122 +463,105 @@ func _section_label(text: String) -> Control:
 
 
 # ----------------------------------------------------------------------------
-# DIGITAL-TWIN HERO — definition + the live Physical<->Virtual link, framed by
-# the 3-layer architecture (Singh & Ray 2024) and the DT-vs-simulation
-# distinction (real-time twinning; Grieves, Sharma et al. 2022).
+# COMPUTER VISION — head-camera feed with live YOLO ball detection overlay.
+# Shows real frames + boxes when the robot's vision node publishes them; runs a
+# realistic demo otherwise so the operator can preview how detection looks live.
 # ----------------------------------------------------------------------------
-func _build_dt_hero() -> PanelContainer:
-	var panel := PanelContainer.new()
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.13, 0.14, 0.19)
-	sb.set_corner_radius_all(14)
-	sb.content_margin_left = 16; sb.content_margin_right = 16
-	sb.content_margin_top = 14; sb.content_margin_bottom = 14
-	sb.shadow_color = Color(0.30, 0.26, 0.45, 0.25)
-	sb.shadow_size = 8; sb.shadow_offset = Vector2(0, 4)
-	panel.add_theme_stylebox_override("panel", sb)
+func _build_vision_section() -> PanelContainer:
+	var content := _make_card("Computer Vision · YOLO Ball Detection", PAS_SKY)
 
-	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 8)
-	panel.add_child(vb)
+	# the camera "screen" — a video panel with the detection overlay on top
+	var screen := PanelContainer.new()
+	var ssb := StyleBoxFlat.new()
+	ssb.bg_color = Color(0.09, 0.10, 0.12)
+	ssb.set_corner_radius_all(8)
+	ssb.content_margin_left = 0; ssb.content_margin_right = 0
+	ssb.content_margin_top = 0; ssb.content_margin_bottom = 0
+	screen.add_theme_stylebox_override("panel", ssb)
+	cv_feed = VisionFeed.new()
+	cv_feed.custom_minimum_size = Vector2(0, 188)   # ~4:3 inside the panel
+	cv_feed.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	screen.add_child(cv_feed)
+	content.add_child(screen)
 
-	# title row
-	var trow := HBoxContainer.new()
-	trow.add_theme_constant_override("separation", 8)
-	var t := Label.new()
-	t.text = "OP3  DIGITAL TWIN"
-	t.add_theme_font_size_override("font_size", 16)
-	t.add_theme_color_override("font_color", Color(0.92, 0.94, 0.98))
-	var bf := _bold_font()
-	if bf: t.add_theme_font_override("font", bf)
-	trow.add_child(t)
-	var spacer := Control.new()
-	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	trow.add_child(spacer)
-	_dt_state_dot = Panel.new()
-	_dt_state_dot.custom_minimum_size = Vector2(9, 9)
-	trow.add_child(_dt_state_dot)
-	_dt_state_lbl = Label.new()
-	_dt_state_lbl.add_theme_font_size_override("font_size", 12)
-	if bf: _dt_state_lbl.add_theme_font_override("font", bf)
-	trow.add_child(_dt_state_lbl)
-	vb.add_child(trow)
+	# status row: model · resolution · FPS · topic
+	var st := HBoxContainer.new()
+	st.add_theme_constant_override("separation", 12)
+	cv_model_lbl = _cv_tag(st, "YOLOv8-n")
+	cv_res_lbl   = _cv_tag(st, "640×480")
+	cv_fps_lbl   = _cv_tag(st, "— fps")
+	var sp := Control.new(); sp.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	st.add_child(sp)
+	cv_demo_btn = Button.new()
+	cv_demo_btn.text = "Demo ON"
+	cv_demo_btn.focus_mode = Control.FOCUS_NONE
+	cv_demo_btn.tooltip_text = "Pratinjau tampilan deteksi YOLO secara realtime (tanpa robot)"
+	cv_demo_btn.pressed.connect(_on_cv_demo_toggle)
+	st.add_child(cv_demo_btn)
+	content.add_child(st)
 
-	# one-line definition
-	var defn := Label.new()
-	defn.text = "Real-time virtual replica of the physical OP3, mirrored from live servo & sensor data."
-	defn.add_theme_font_size_override("font_size", 11)
-	defn.add_theme_color_override("font_color", Color(0.64, 0.68, 0.78))
-	defn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	vb.add_child(defn)
+	# detection readout line (what YOLO sees right now)
+	cv_det_lbl = Label.new()
+	cv_det_lbl.text = "Detections: —"
+	cv_det_lbl.add_theme_font_size_override("font_size", 11)
+	cv_det_lbl.add_theme_color_override("font_color", Color(0.40, 0.38, 0.50))
+	content.add_child(cv_det_lbl)
 
-	# 3-layer flow chips: PHYSICAL -> LINK -> VIRTUAL
-	var flow := HBoxContainer.new()
-	flow.add_theme_constant_override("separation", 4)
-	_dt_layer_chip(flow, "PHYSICAL", "OP3 · Dynamixel · NUC", Color(0.97, 0.68, 0.58))
-	_dt_arrow(flow)
-	_dt_layer_chip(flow, "LINK", "rosbridge / ROS 2", Color(0.46, 0.71, 0.94))
-	_dt_arrow(flow)
-	_dt_layer_chip(flow, "VIRTUAL", "this twin", Color(0.62, 0.80, 0.55))
-	vb.add_child(flow)
+	var topic := Label.new()
+	topic.text = "topic: /usb_cam/image_raw  ·  /dt/vision/detections"
+	topic.add_theme_font_size_override("font_size", 9)
+	topic.add_theme_color_override("font_color", Color(0.58, 0.56, 0.66))
+	content.add_child(topic)
 
-	# link + mode status lines
-	_dt_link_lbl = Label.new()
-	_dt_link_lbl.add_theme_font_size_override("font_size", 10)
-	_dt_link_lbl.add_theme_color_override("font_color", Color(0.56, 0.60, 0.70))
-	vb.add_child(_dt_link_lbl)
-
-	_dt_mode_lbl = Label.new()
-	_dt_mode_lbl.add_theme_font_size_override("font_size", 10)
-	_dt_mode_lbl.add_theme_color_override("font_color", Color(0.56, 0.60, 0.70))
-	vb.add_child(_dt_mode_lbl)
-
-	# capabilities the twin provides (DT functions: monitoring, PHM, authoring)
-	var caps := Label.new()
-	caps.text = "Live monitoring · PHM fault detection · pose authoring"
-	caps.add_theme_font_size_override("font_size", 10)
-	caps.add_theme_color_override("font_color", Color(0.45, 0.48, 0.58))
-	vb.add_child(caps)
-
-	_apply_sync_visuals()
-	return panel
+	return content.get_meta("card_panel")
 
 
-func _dt_layer_chip(parent: HBoxContainer, head: String, sub: String, accent: Color) -> void:
-	var p := PanelContainer.new()
-	p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.18, 0.19, 0.25)
-	sb.border_color = accent
-	sb.border_width_left = 2
-	sb.set_corner_radius_all(7)
-	sb.content_margin_left = 8; sb.content_margin_right = 6
-	sb.content_margin_top = 5; sb.content_margin_bottom = 5
-	p.add_theme_stylebox_override("panel", sb)
-	var v := VBoxContainer.new()
-	v.add_theme_constant_override("separation", 0)
-	p.add_child(v)
-	var h := Label.new()
-	h.text = head
-	h.add_theme_font_size_override("font_size", 10)
-	h.add_theme_color_override("font_color", accent)
-	var bf := _bold_font()
-	if bf: h.add_theme_font_override("font", bf)
-	v.add_child(h)
-	var s := Label.new()
-	s.text = sub
-	s.add_theme_font_size_override("font_size", 9)
-	s.add_theme_color_override("font_color", Color(0.60, 0.64, 0.74))
-	v.add_child(s)
-	parent.add_child(p)
+func _cv_tag(parent: HBoxContainer, txt: String) -> Label:
+	var l := Label.new()
+	l.text = txt
+	l.add_theme_font_size_override("font_size", 10)
+	l.add_theme_color_override("font_color", Color(0.45, 0.43, 0.55))
+	parent.add_child(l)
+	return l
 
 
-func _dt_arrow(parent: HBoxContainer) -> void:
-	var a := Label.new()
-	a.text = "→"
-	a.add_theme_color_override("font_color", Color(0.50, 0.54, 0.64))
-	a.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
-	parent.add_child(a)
+func _on_cv_demo_toggle() -> void:
+	if cv_feed == null:
+		return
+	cv_feed.demo = not cv_feed.demo
+	cv_demo_btn.text = "Demo ON" if cv_feed.demo else "Demo OFF"
+
+
+# Real wiring: call these from Main when the robot publishes camera + YOLO data.
+# tex = decoded camera frame; dets = [{label, conf, rect:Rect2 (normalized)}].
+func set_camera_frame(tex: Texture2D) -> void:
+	if cv_feed:
+		cv_feed.tex = tex
+		cv_feed.demo = false
+		if cv_demo_btn: cv_demo_btn.text = "Demo OFF"
+
+func set_detections(dets: Array) -> void:
+	if cv_feed:
+		cv_feed.detections = dets
+		cv_feed.demo = false
+
+# Update CV status labels (called from the per-frame update loop).
+func _refresh_vision() -> void:
+	if cv_feed == null:
+		return
+	cv_fps_lbl.text = "%d fps" % int(Engine.get_frames_per_second())
+	var n := cv_feed.detections.size()
+	if n == 0:
+		cv_det_lbl.text = "Detections: none"
+		cv_det_lbl.add_theme_color_override("font_color", Color(0.55, 0.53, 0.62))
+	else:
+		var d: Dictionary = cv_feed.detections[0]
+		var r: Rect2 = d.get("rect", Rect2())
+		var cx := r.position.x + r.size.x * 0.5
+		var cy := r.position.y + r.size.y * 0.5
+		cv_det_lbl.text = "%s  %d%%  @ (%.2f, %.2f)" % [
+			d.get("label", "?"), int(d.get("conf", 0.0) * 100.0), cx, cy]
+		cv_det_lbl.add_theme_color_override("font_color", Color(0.20, 0.62, 0.42))
 
 
 # Called by Main on connection/data changes. connected = live link to physical.
@@ -1687,6 +1750,7 @@ func update_from_robot(robot: Node3D) -> void:
 	if not _sys_external:
 		_mock_system(t)
 	_refresh_system_bars()
+	_refresh_vision()
 
 	# 4c. Popup detail servo tetap hidup selama terbuka
 	if _servo_popup and _servo_popup.visible:
