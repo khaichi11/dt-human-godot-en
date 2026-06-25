@@ -80,7 +80,6 @@ var motions_data := {}
 var motion_option: OptionButton
 var play_btn: Button
 var stop_btn: Button
-var _walk_check: CheckButton
 
 # Editor pose/scene — batas seperti ROBOTIS: 7 step/scene, 256 scene tersimpan.
 const MAX_STEPS := 7
@@ -387,20 +386,14 @@ func _build_poses_section() -> PanelContainer:
 
 	content.add_child(row)
 
-	# Toggle jalan di tempat
-	var walk := CheckButton.new()
-	walk.text = "Jalan di Tempat"
-	walk.focus_mode = Control.FOCUS_NONE
-	walk.toggled.connect(_on_walk_toggled)
-	content.add_child(walk)
-	_walk_check = walk
+	var hint := Label.new()
+	hint.text = "Jalan/gerak mengikuti robot asli saat mode LIVE tersambung."
+	hint.add_theme_font_size_override("font_size", 10)
+	hint.add_theme_color_override("font_color", Color(0.53, 0.51, 0.63))
+	hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	content.add_child(hint)
 
 	return content.get_meta("card_panel")
-
-
-func _on_walk_toggled(on: bool) -> void:
-	if _robot_ref and _robot_ref.has_method("set_walking"):
-		_robot_ref.set_walking(on)
 
 
 # ----------------------------------------------------------------------------

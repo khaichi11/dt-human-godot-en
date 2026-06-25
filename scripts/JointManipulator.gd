@@ -150,7 +150,10 @@ func _input(event: InputEvent) -> void:
 					select_joint(jn)
 					_begin_drag(event.position)
 					get_viewport().set_input_as_handled()
-				# else: biarkan kamera orbit (tidak di-handle)
+				else:
+					# 3) klik area kosong -> sembunyikan ring (tak menghalangi
+					#    pandangan). Tidak di-handle, jadi kamera tetap bisa orbit.
+					deselect()
 		else:
 			if _dragging:
 				_dragging = false
