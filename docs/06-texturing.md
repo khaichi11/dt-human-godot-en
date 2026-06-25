@@ -33,18 +33,36 @@ Source meshes: `ROBOTIS-OP3-Common/op3_description/meshes/*.stl`.
    *glTF Binary*. Name it exactly like the link: `rl3.glb`.
 7. Put the file in **`assets/op3_meshes/`** next to the `.obj`.
 
+## Edit directly in Blender (.blend — easiest)
+
+Godot 4 can import `.blend` files natively, so you can keep editing in Blender
+and the twin updates on reimport — no manual export step.
+
+1. In Godot: *Editor → Editor Settings → FileSystem → Import → Blender* and set
+   **Blender Path** to your Blender install (once).
+2. Save your painted link as `assets/op3_meshes/<link>.blend` (e.g. `rl3.blend`),
+   one Blender file per link, modelled in metres at the original origin.
+3. Re-focus Godot → it reimports automatically. Edit in Blender anytime; the
+   twin picks up the change.
+
 ## How the twin picks it up
 
-`OP3Robot._load_mesh()` prefers `<link>.glb` over `<link>.obj`. If the glb mesh
-carries materials, the twin renders them **as-is** (no code override) — so your
-servo-black / metal-silver paint shows exactly. No code change needed; just drop
-the `.glb` files in and reopen the project.
+`OP3Robot._load_link_resource()` loads, in priority order, **`<link>.blend` →
+`<link>.glb` → `<link>.obj`**. For `.blend`/`.glb` it keeps **all sub-objects and
+their materials as-is**, so your servo-black / metal-silver paint shows exactly.
+Just drop the files in `assets/op3_meshes/` and reopen — no code change.
+
+## Servo health targets only the servo
+
+Name the **servo sub-object `servo`** (any name containing "servo") in each link.
+The twin then applies the fault **red blink only to that sub-mesh** — the metal
+bracket stays its painted colour. If no `servo`-named object exists, the blink
+falls back to the whole link (current `.obj` behaviour).
 
 Notes:
-- A link rendered from a painted `.glb` is **not** recoloured by the health
-  blink (that override only applies to the default code material). Health still
-  shows on the panel row dot.
 - Keep the same file name and origin as the original link so it aligns in the rig.
+- Health (red/amber) is driven by `/dt/servo_health`; the panel row dot always
+  shows status regardless of mesh type.
 
 ## Quickest path
 
