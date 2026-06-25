@@ -31,3 +31,6 @@ Thumbs.db
 pose_*.png
 pose_*.png.import
 *_row.png*
+
+# --- Reference papers (digital-twin literature; not shipped) ---
+/docs/paper/

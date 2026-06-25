@@ -30,6 +30,9 @@ class Sparkline extends Control:
 	var line_col := Color(0.55, 0.45, 0.86)
 	var vmin := -180.0
 	var vmax := 180.0
+	var filled := false                     # btop-style area fill under the line
+	var grid_col := Color(0.90, 0.88, 0.94)
+	var zone_color := false                  # tint line green/amber/red by level
 
 	func push(v: float) -> void:
 		values.append(v)
@@ -37,14 +40,26 @@ class Sparkline extends Control:
 			values.remove_at(0)
 		queue_redraw()
 
+	func _line_color() -> Color:
+		if not zone_color or values.is_empty():
+			return line_col
+		var t := (values[values.size() - 1] - vmin) / (vmax - vmin)
+		if t >= 0.85: return Color(0.90, 0.33, 0.33)
+		if t >= 0.60: return Color(0.95, 0.70, 0.25)
+		return Color(0.35, 0.75, 0.45)
+
 	func _draw() -> void:
 		var w := size.x
 		var h := size.y
-		# grid garis tengah + atas/bawah
-		var grid := Color(0.90, 0.88, 0.94)
-		draw_line(Vector2(0, h * 0.5), Vector2(w, h * 0.5), grid, 1.0)
-		draw_line(Vector2(0, h - 1), Vector2(w, h - 1), grid, 1.0)
-		draw_line(Vector2(0, 1), Vector2(w, 1), grid, 1.0)
+		# horizontal gridlines (0/25/50/75/100%)
+		for f in [0.0, 0.25, 0.5, 0.75, 1.0]:
+			var gy: float = h * float(f)
+			draw_line(Vector2(0, gy), Vector2(w, gy), grid_col, 1.0)
+		# faint vertical gridlines (btop column feel)
+		var cols := 6
+		for c in range(1, cols):
+			var gx: float = w * float(c) / float(cols)
+			draw_line(Vector2(gx, 0), Vector2(gx, h), Color(grid_col, 0.5), 1.0)
 		if values.size() < 2:
 			return
 		var pts := PackedVector2Array()
@@ -53,11 +68,19 @@ class Sparkline extends Control:
 			var t := (values[i] - vmin) / (vmax - vmin)
 			var y := h * (1.0 - clampf(t, 0.0, 1.0))
 			pts.append(Vector2(x, y))
-		draw_polyline(pts, line_col, 2.0, true)
+		var lc := _line_color()
+		if filled:
+			# build a closed polygon down to the baseline and fill translucently
+			var poly := PackedVector2Array(pts)
+			poly.append(Vector2(pts[pts.size() - 1].x, h))
+			poly.append(Vector2(pts[0].x, h))
+			draw_colored_polygon(poly, Color(lc, 0.16))
+		draw_polyline(pts, lc, 2.0, true)
 
 
 var graph_spark: Sparkline
 var graph_lbl: Label
+var sys_cpu_graph: Sparkline   # btop-style CPU history area graph
 
 # Referensi node yang dibuat dinamis agar bisa di-update tiap frame
 var battery_bar: ProgressBar
@@ -89,6 +112,7 @@ var _edit_steps: Array = []
 var scene_name_edit: LineEdit
 var step_count_lbl: Label
 var _steps_box: VBoxContainer
+var _edit_banner: Label        # mode banner di editor (AUTHOR vs MIMIC)
 
 # Kontrol: referensi robot 3D + manipulator (di-set Main lewat bind_controls)
 var _robot_ref: Node3D
@@ -107,7 +131,17 @@ var _popup_arm_btn: Button
 var fps_lbl: Label
 var latency_lbl: Label
 var uptime_lbl: Label
-var mode_lbl: Label
+
+# Digital-Twin synchronization state (hero card). A DT is distinguished from a
+# plain simulation/virtual model by a LIVE, real-time link to the physical asset
+# (Grieves; Sharma et al. 2022). We surface that link explicitly.
+var _dt_state_lbl: Label       # SYNCHRONIZED / SIMULATION
+var _dt_state_dot: Panel
+var _dt_link_lbl: Label        # data-flow / freshness line
+var _dt_mode_lbl: Label        # operational mode (mimic / author)
+var _dt_synced := false
+var _dt_latency_ms := 0.0
+var _dt_last_data_ms := 0      # Time.get_ticks_msec at last physical packet
 
 # btop-style system monitor (Intel NUC onboard). Bars + per-core strip. Values
 # are mocked with believable NUC dynamics; if /dt/system arrives over rosbridge
@@ -168,15 +202,19 @@ func _build() -> void:
 	col.add_theme_constant_override("separation", 12)
 	pad.add_child(col)
 
-	col.add_child(_build_status_header())
+	# Order follows the digital-twin flow: identity/sync -> KPIs -> MONITOR the
+	# physical asset (compute, power, sensors, joints, trend) -> CONTROL/author.
+	col.add_child(_build_dt_hero())                    # what a DT is + live sync
+	col.add_child(_section_label("MONITORING — physical asset"))
 	col.add_child(_build_stat_strip())
-	col.add_child(_build_poses_section())
-	col.add_child(_build_editor_section())
+	col.add_child(_build_system_section())
 	col.add_child(_build_battery_section())
-	col.add_child(_build_graph_section())
 	col.add_child(_build_imu_section())
 	col.add_child(_build_joints_section())
-	col.add_child(_build_system_section())
+	col.add_child(_build_graph_section())
+	col.add_child(_section_label("CONTROL — drive & author the twin"))
+	col.add_child(_build_poses_section())
+	col.add_child(_build_editor_section())
 
 
 # ----------------------------------------------------------------------------
@@ -332,53 +370,185 @@ func _add_card_to(_parent: Container, _content: VBoxContainer) -> void:
 # ----------------------------------------------------------------------------
 # 1) STATUS HEADER
 # ----------------------------------------------------------------------------
-func _build_status_header() -> PanelContainer:
+# Small all-caps divider between the MONITOR and CONTROL groups.
+func _section_label(text: String) -> Control:
+	var l := Label.new()
+	l.text = text.to_upper()
+	l.add_theme_font_size_override("font_size", 10)
+	l.add_theme_color_override("font_color", Color(0.58, 0.55, 0.68))
+	var bf := _bold_font()
+	if bf: l.add_theme_font_override("font", bf)
+	l.add_theme_constant_override("line_spacing", 0)
+	return l
+
+
+# ----------------------------------------------------------------------------
+# DIGITAL-TWIN HERO — definition + the live Physical<->Virtual link, framed by
+# the 3-layer architecture (Singh & Ray 2024) and the DT-vs-simulation
+# distinction (real-time twinning; Grieves, Sharma et al. 2022).
+# ----------------------------------------------------------------------------
+func _build_dt_hero() -> PanelContainer:
 	var panel := PanelContainer.new()
 	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(0.97, 0.96, 0.99)
-	sb.border_color = Color(0.84, 0.80, 0.93)
-	sb.border_width_left = 1
-	sb.border_width_right = 1
-	sb.border_width_top = 1
-	sb.border_width_bottom = 1
-	sb.corner_radius_top_left = 6
-	sb.corner_radius_top_right = 6
-	sb.corner_radius_bottom_left = 6
-	sb.corner_radius_bottom_right = 6
-	sb.content_margin_left = 14
-	sb.content_margin_right = 14
-	sb.content_margin_top = 12
-	sb.content_margin_bottom = 12
+	sb.bg_color = Color(0.13, 0.14, 0.19)
+	sb.set_corner_radius_all(14)
+	sb.content_margin_left = 16; sb.content_margin_right = 16
+	sb.content_margin_top = 14; sb.content_margin_bottom = 14
+	sb.shadow_color = Color(0.30, 0.26, 0.45, 0.25)
+	sb.shadow_size = 8; sb.shadow_offset = Vector2(0, 4)
 	panel.add_theme_stylebox_override("panel", sb)
 
 	var vb := VBoxContainer.new()
-	vb.add_theme_constant_override("separation", 4)
+	vb.add_theme_constant_override("separation", 8)
 	panel.add_child(vb)
 
-	var line1 := HBoxContainer.new()
-	var dot := ColorRect.new()
-	dot.color = Color(0.16, 0.56, 0.47)
-	dot.custom_minimum_size = Vector2(8, 8)
-	line1.add_child(dot)
+	# title row
+	var trow := HBoxContainer.new()
+	trow.add_theme_constant_override("separation", 8)
+	var t := Label.new()
+	t.text = "OP3  DIGITAL TWIN"
+	t.add_theme_font_size_override("font_size", 16)
+	t.add_theme_color_override("font_color", Color(0.92, 0.94, 0.98))
+	var bf := _bold_font()
+	if bf: t.add_theme_font_override("font", bf)
+	trow.add_child(t)
+	var spacer := Control.new()
+	spacer.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	trow.add_child(spacer)
+	_dt_state_dot = Panel.new()
+	_dt_state_dot.custom_minimum_size = Vector2(9, 9)
+	trow.add_child(_dt_state_dot)
+	_dt_state_lbl = Label.new()
+	_dt_state_lbl.add_theme_font_size_override("font_size", 12)
+	if bf: _dt_state_lbl.add_theme_font_override("font", bf)
+	trow.add_child(_dt_state_lbl)
+	vb.add_child(trow)
 
-	var space := Control.new()
-	space.custom_minimum_size = Vector2(8, 0)
-	line1.add_child(space)
+	# one-line definition
+	var defn := Label.new()
+	defn.text = "Real-time virtual replica of the physical OP3, mirrored from live servo & sensor data."
+	defn.add_theme_font_size_override("font_size", 11)
+	defn.add_theme_color_override("font_color", Color(0.64, 0.68, 0.78))
+	defn.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(defn)
 
-	var name_lbl := Label.new()
-	name_lbl.text = "OP3-001 · ONLINE"
-	name_lbl.add_theme_color_override("font_color", Color(0.16, 0.56, 0.47))
-	name_lbl.add_theme_font_size_override("font_size", 14)
-	line1.add_child(name_lbl)
-	vb.add_child(line1)
+	# 3-layer flow chips: PHYSICAL -> LINK -> VIRTUAL
+	var flow := HBoxContainer.new()
+	flow.add_theme_constant_override("separation", 4)
+	_dt_layer_chip(flow, "PHYSICAL", "OP3 · Dynamixel · NUC", Color(0.97, 0.68, 0.58))
+	_dt_arrow(flow)
+	_dt_layer_chip(flow, "LINK", "rosbridge / ROS 2", Color(0.46, 0.71, 0.94))
+	_dt_arrow(flow)
+	_dt_layer_chip(flow, "VIRTUAL", "this twin", Color(0.62, 0.80, 0.55))
+	vb.add_child(flow)
 
-	mode_lbl = Label.new()
-	mode_lbl.text = "Mode: WALKING_READY · Comm: 1 Mbps · Loss: 0.0%"
-	mode_lbl.add_theme_color_override("font_color", Color(0.45, 0.49, 0.55))
-	mode_lbl.add_theme_font_size_override("font_size", 11)
-	vb.add_child(mode_lbl)
+	# link + mode status lines
+	_dt_link_lbl = Label.new()
+	_dt_link_lbl.add_theme_font_size_override("font_size", 10)
+	_dt_link_lbl.add_theme_color_override("font_color", Color(0.56, 0.60, 0.70))
+	vb.add_child(_dt_link_lbl)
 
+	_dt_mode_lbl = Label.new()
+	_dt_mode_lbl.add_theme_font_size_override("font_size", 10)
+	_dt_mode_lbl.add_theme_color_override("font_color", Color(0.56, 0.60, 0.70))
+	vb.add_child(_dt_mode_lbl)
+
+	# capabilities the twin provides (DT functions: monitoring, PHM, authoring)
+	var caps := Label.new()
+	caps.text = "Live monitoring · PHM fault detection · pose authoring"
+	caps.add_theme_font_size_override("font_size", 10)
+	caps.add_theme_color_override("font_color", Color(0.45, 0.48, 0.58))
+	vb.add_child(caps)
+
+	_apply_sync_visuals()
 	return panel
+
+
+func _dt_layer_chip(parent: HBoxContainer, head: String, sub: String, accent: Color) -> void:
+	var p := PanelContainer.new()
+	p.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(0.18, 0.19, 0.25)
+	sb.border_color = accent
+	sb.border_width_left = 2
+	sb.set_corner_radius_all(7)
+	sb.content_margin_left = 8; sb.content_margin_right = 6
+	sb.content_margin_top = 5; sb.content_margin_bottom = 5
+	p.add_theme_stylebox_override("panel", sb)
+	var v := VBoxContainer.new()
+	v.add_theme_constant_override("separation", 0)
+	p.add_child(v)
+	var h := Label.new()
+	h.text = head
+	h.add_theme_font_size_override("font_size", 10)
+	h.add_theme_color_override("font_color", accent)
+	var bf := _bold_font()
+	if bf: h.add_theme_font_override("font", bf)
+	v.add_child(h)
+	var s := Label.new()
+	s.text = sub
+	s.add_theme_font_size_override("font_size", 9)
+	s.add_theme_color_override("font_color", Color(0.60, 0.64, 0.74))
+	v.add_child(s)
+	parent.add_child(p)
+
+
+func _dt_arrow(parent: HBoxContainer) -> void:
+	var a := Label.new()
+	a.text = "→"
+	a.add_theme_color_override("font_color", Color(0.50, 0.54, 0.64))
+	a.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+	parent.add_child(a)
+
+
+# Called by Main on connection/data changes. connected = live link to physical.
+func set_sync_state(connected: bool, latency_ms: float) -> void:
+	_dt_synced = connected
+	_dt_latency_ms = latency_ms
+	if connected:
+		_dt_last_data_ms = Time.get_ticks_msec()
+	_apply_sync_visuals()
+
+
+func _apply_sync_visuals() -> void:
+	if _dt_state_lbl == null:
+		return
+	if _dt_synced:
+		_dt_state_lbl.text = "SYNCHRONIZED"
+		_dt_state_lbl.add_theme_color_override("font_color", Color(0.40, 0.90, 0.55))
+		_set_dot_color(_dt_state_dot, Color(0.30, 0.90, 0.45))
+		_dt_link_lbl.text = "Physical → Virtual link active · latency %.0f ms" % _dt_latency_ms
+	else:
+		_dt_state_lbl.text = "SIMULATION"
+		_dt_state_lbl.add_theme_color_override("font_color", Color(0.97, 0.75, 0.35))
+		_set_dot_color(_dt_state_dot, Color(0.75, 0.78, 0.82))
+		_dt_link_lbl.text = "No physical link — virtual model only (connect a robot to twin it)"
+	_update_dt_mode_lbl()
+
+
+func _update_dt_mode_lbl() -> void:
+	if _dt_mode_lbl == null:
+		return
+	# Reuse joint-slider editability as the proxy for ATUR(author) vs LIVE(mimic)
+	var authoring := false
+	for jn in joint_sliders:
+		authoring = (joint_sliders[jn] as HSlider).editable
+		break
+	if authoring:
+		_dt_mode_lbl.text = "Mode: AUTHOR — you pose the virtual model (Physical follows on deploy)"
+	else:
+		_dt_mode_lbl.text = "Mode: MIMIC — virtual mirrors the physical robot in real time"
+
+
+func _update_edit_banner(editable: bool) -> void:
+	if _edit_banner == null:
+		return
+	if editable:
+		_edit_banner.text = "● AUTHOR MODE — servo editing enabled. Arm a servo to change its angle."
+		_edit_banner.add_theme_color_override("font_color", Color(0.42, 0.70, 0.45))
+	else:
+		_edit_banner.text = "○ MIMIC MODE — editing locked while mirroring the robot. Switch to ATUR to author poses."
+		_edit_banner.add_theme_color_override("font_color", Color(0.85, 0.55, 0.25))
 
 
 # ----------------------------------------------------------------------------
@@ -430,7 +600,21 @@ func _build_poses_section() -> PanelContainer:
 # bernama (maks 256). Tersimpan ke user:// dan muncul di daftar gerakan.
 # ----------------------------------------------------------------------------
 func _build_editor_section() -> PanelContainer:
-	var content := _make_card("Editor Pose / Scene", PAS_PINK)
+	var content := _make_card("Pose / Scene Editor", PAS_PINK)
+
+	# Mode banner — pose authoring only works in AUTHOR (Atur) mode
+	_edit_banner = Label.new()
+	_edit_banner.add_theme_font_size_override("font_size", 10)
+	_edit_banner.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	content.add_child(_edit_banner)
+
+	# Numbered flow so the authoring sequence is unambiguous
+	var flow := Label.new()
+	flow.text = "1· Pilih servo (klik di 3D)   2· Tekan ARM di popup   3· Putar ring / geser slider   4· + Step   5· Simpan Scene"
+	flow.add_theme_font_size_override("font_size", 10)
+	flow.add_theme_color_override("font_color", Color(0.53, 0.51, 0.63))
+	flow.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	content.add_child(flow)
 
 	scene_name_edit = LineEdit.new()
 	scene_name_edit.placeholder_text = "Nama scene (mis. Scene 1)"
@@ -491,6 +675,7 @@ func _build_editor_section() -> PanelContainer:
 
 	_update_step_count()
 	_rebuild_step_list()
+	_update_edit_banner(true)
 	return content.get_meta("card_panel")
 
 
@@ -1013,6 +1198,8 @@ func set_editable(editable: bool) -> void:
 		stop_btn.disabled = not editable
 	if motion_option:
 		motion_option.disabled = not editable
+	_update_dt_mode_lbl()
+	_update_edit_banner(editable)
 
 
 func _set_dot_color(dot: Panel, c: Color) -> void:
@@ -1294,6 +1481,17 @@ func _build_system_section() -> PanelContainer:
 	cpu_head.add_child(sys_cpu_lbl)
 	content.add_child(cpu_head)
 
+	# CPU history area graph (btop signature)
+	sys_cpu_graph = Sparkline.new()
+	sys_cpu_graph.custom_minimum_size = Vector2(0, 52)
+	sys_cpu_graph.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sys_cpu_graph.vmin = 0.0
+	sys_cpu_graph.vmax = 100.0
+	sys_cpu_graph.filled = true
+	sys_cpu_graph.zone_color = true
+	sys_cpu_graph.line_col = Color(0.46, 0.71, 0.94)
+	content.add_child(sys_cpu_graph)
+
 	# per-core mini bars (btop signature)
 	var cores := GridContainer.new()
 	cores.columns = 4
@@ -1558,6 +1756,8 @@ func _refresh_system_bars() -> void:
 	sys_cpu_bar.value = cpu
 	sys_cpu_lbl.text = "%.0f%%" % cpu
 	_tint_bar(sys_cpu_bar, sys_cpu_lbl, cpu, PAS_SKY)
+	if sys_cpu_graph:
+		sys_cpu_graph.push(cpu)
 	for i in mini(sys_core_bars.size(), _sys["cores"].size()):
 		var cv: float = _sys["cores"][i]
 		sys_core_bars[i].value = cv

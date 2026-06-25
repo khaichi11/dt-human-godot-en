@@ -409,11 +409,21 @@ func _on_ros_status(state: String) -> void:
 		"closed":
 			_set_ros_dot(Color(0.90, 0.30, 0.30))              # merah
 			_live_connected = false
+			if sensor_panel and sensor_panel.has_method("set_sync_state"):
+				sensor_panel.set_sync_state(false, 0.0)
 
+
+var _last_joint_ms := 0
 
 func _on_ros_joints(joints: Dictionary) -> void:
-	# Data joint asli dari robot -> terapkan ke twin (hanya saat mode Live)
+	# Data joint asli dari robot -> terapkan ke twin (hanya saat mode Live).
+	# Tiap paket = bukti link real-time hidup (twin tersinkron dgn fisik).
 	_live_connected = true
+	var now := Time.get_ticks_msec()
+	var dt_ms := float(now - _last_joint_ms) if _last_joint_ms > 0 else 0.0
+	_last_joint_ms = now
+	if sensor_panel and sensor_panel.has_method("set_sync_state"):
+		sensor_panel.set_sync_state(true, clampf(dt_ms, 0.0, 999.0))
 	if control_mode or robot == null:
 		return
 	for jname in joints:
@@ -527,6 +537,14 @@ func _build_3d_scene() -> void:
 	# Hubungkan panel kiri ke robot + manipulator (slider & pilih joint)
 	if sensor_panel and sensor_panel.has_method("bind_controls"):
 		sensor_panel.bind_controls(robot, manipulator)
+	# Sinkronkan state awal (mode + sync) ke panel & manipulator sekali di awal,
+	# supaya banner DT (MIMIC/AUTHOR, SIMULATION) benar sebelum koneksi pertama.
+	if manipulator and manipulator.has_method("set_editable"):
+		manipulator.set_editable(control_mode)
+	if sensor_panel and sensor_panel.has_method("set_editable"):
+		sensor_panel.set_editable(control_mode)
+	if sensor_panel and sensor_panel.has_method("set_sync_state"):
+		sensor_panel.set_sync_state(false, 0.0)
 
 	# Klien rosbridge (koneksi ke robot asli)
 	ros_bridge = RosBridgeScript.new()
