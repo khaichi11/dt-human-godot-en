@@ -87,3 +87,38 @@ Notes:
 
 You don't have to do all 21 at once — paint a few visible links first (torso,
 head, thighs); the rest keep the default black until you get to them.
+
+## Auto-split status (which links to check)
+
+The servo/frame split was already done automatically for every link
+(`scratchpad/split_servo.py`, using the Dynamixel XM-430 size signature
+≈ 28.5 × 34 × 46.5 mm, ~43 000 mm³). Result per link — **you do NOT need to check
+all 21 one-by-one**, only eyeball the robot and revisit a link if its servo
+isn't black where you expect:
+
+| Link | Body part | Servo auto-detected? |
+| ---- | --------- | -------------------- |
+| body | torso | ✅ servo(s) black |
+| h1 | neck (head_pan) | ⬜ all-silver (bracket) |
+| h2 | head (head_tilt + cam) | ✅ servo black |
+| la1 / ra1 | shoulder-pitch bracket | ⬜ all-silver (bracket) |
+| la2 / ra2 | shoulder-roll + upper arm | ✅ servo black |
+| la3 / ra3 | elbow + forearm | ⬜ all-silver (bracket) |
+| ll1 / rl1 | hip-yaw | ⬜ all-silver (bracket) |
+| ll2 / rl2 | hip-roll | ✅ servo black |
+| ll3 / rl3 | hip-pitch (thigh) | ✅ servo black |
+| **ll4 / rl4** | **knee** | ⚠️ all-silver — **check first** |
+| ll5 / rl5 | ankle-pitch (shin) | ✅ servo black |
+| ll6 / rl6 | ankle-roll (foot) | ⬜ all-silver (foot plate) |
+
+- **✅ (10 links)** — a full servo box was found and coloured black; fault-red
+  targets only that servo. Nothing to do.
+- **⬜ (bracket/foot links)** — these segments are pure brackets/connectors with
+  no servo box, so all-silver is correct. Leave them.
+- **⚠️ ll4 / rl4 (knee)** — these STL meshes are heavily fragmented (~240 tiny
+  shells), so auto-detection is least reliable here. **Check these two first**;
+  if the knee servo should be black/red-targeted, redo just `rl4`/`ll4` in
+  Blender (separate the servo, name it `servo`, export `.glb`).
+
+So in practice only the **knee pair (ll4, rl4)** is worth a manual look; the rest
+are either correctly split or are genuine bracket parts.
