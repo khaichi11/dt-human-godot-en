@@ -28,6 +28,8 @@ var _vp: SubViewport
 var _cube: Node3D
 var _vp_cam: Camera3D
 var _menu: PopupMenu
+var _press_pos: Vector2
+var _dragging := false
 
 
 func setup(main_cam: Camera3D) -> void:
@@ -147,16 +149,29 @@ func _process(_delta: float) -> void:
 
 
 func _gui_input(event: InputEvent) -> void:
-	if not (event is InputEventMouseButton and event.pressed):
-		return
-	if event.button_index == MOUSE_BUTTON_LEFT:
-		if event.double_click:
-			_apply("depan")          # dobel-klik = hadap depan (home)
-		else:
-			_pick_face(event.position)
-		accept_event()
-	elif event.button_index == MOUSE_BUTTON_RIGHT:
-		_show_menu(event.global_position)
+	# Drag kubus = orbit kamera bebas; klik sisi = snap; dobel-klik = depan;
+	# klik-kanan = menu.
+	if event is InputEventMouseButton:
+		if event.button_index == MOUSE_BUTTON_LEFT:
+			if event.pressed:
+				if event.double_click:
+					_apply("depan")
+				else:
+					_press_pos = event.position
+					_dragging = false
+			else:
+				if not _dragging:
+					_pick_face(event.position)   # klik tanpa geser = snap
+				_dragging = false
+			accept_event()
+		elif event.button_index == MOUSE_BUTTON_RIGHT and event.pressed:
+			_show_menu(event.global_position)
+			accept_event()
+	elif event is InputEventMouseMotion and (event.button_mask & MOUSE_BUTTON_MASK_LEFT):
+		if event.position.distance_to(_press_pos) > 4.0:
+			_dragging = true
+		if _dragging and _main_cam and _main_cam.has_method("orbit_by"):
+			_main_cam.orbit_by(-event.relative.x * 0.6, -event.relative.y * 0.6)
 		accept_event()
 
 
