@@ -511,6 +511,13 @@ func _build_imu_popup() -> void:
 	imu_enable_chk.toggled.connect(_on_imu_enable)
 	vb.add_child(imu_enable_chk)
 
+	var settle_chk := CheckBox.new()
+	settle_chk.text = "Auto-settle kontak (eksperimen — ratakan tumpuan)"
+	settle_chk.button_pressed = false
+	settle_chk.add_theme_color_override("font_color", COL_TEXT)
+	settle_chk.toggled.connect(_on_auto_settle)
+	vb.add_child(settle_chk)
+
 	var zero_btn := Button.new()
 	zero_btn.text = "⟲  Zero now (tangkap pose tegak)"
 	zero_btn.focus_mode = Control.FOCUS_NONE
@@ -550,6 +557,11 @@ func _imu_slider_row(ax: String) -> Control:
 func _on_imu_enable(on: bool) -> void:
 	if robot and robot.has_method("set_imu_enabled"):
 		robot.set_imu_enabled(on)
+
+
+func _on_auto_settle(on: bool) -> void:
+	if robot and robot.has_method("set_auto_settle"):
+		robot.set_auto_settle(on)
 
 
 func _on_imu_zero() -> void:

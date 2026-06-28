@@ -57,6 +57,8 @@ var _imu_q := Quaternion.IDENTITY    # orientasi mentah terakhir (frame ROS)
 var _imu_ref := Quaternion.IDENTITY  # referensi "Zero now" (mount IMU tak pasti)
 var _imu_manual := Basis()           # offset manual roll/pitch/yaw (trial-error)
 var _imu_enabled := false
+var _auto_settle := false            # ratakan tumpuan ke lantai (eksperimen, default off)
+var _settle := Basis()               # koreksi orientasi hasil auto-settle
 
 # Pembedaan servo vs besi yang akurat butuh mesh dipisah per-komponen (di
 # Blender) — mesh OP3 per-link menyatukan servo+bracket. Default: hitam seragam.
@@ -256,7 +258,10 @@ func _load_link_resource(basename: String) -> Resource:
 # tetap menapak — mengikuti "gravitasi" visual, tidak melayang/menembus.
 # ============================================================================
 func _process(_delta: float) -> void:
-	_ground_to_floor()
+	if _auto_settle and not _imu_enabled:
+		_settle_step()
+	else:
+		_ground_to_floor()
 	_blink_health()
 
 
@@ -365,6 +370,8 @@ func _combined_aabb(node: Node, inv_root: Transform3D) -> AABB:
 # ============================================================================
 func set_imu_enabled(on: bool) -> void:
 	_imu_enabled = on
+	if on:
+		_settle = Basis()
 	_update_base()
 
 
@@ -407,8 +414,85 @@ func _update_base() -> void:
 	var q := Quaternion.IDENTITY
 	if _imu_enabled:
 		q = _imu_ref.inverse() * _imu_q
-	model_root.transform.basis = ROS_TO_GODOT * (Basis(q) * _imu_manual)
+	model_root.transform.basis = _settle * (ROS_TO_GODOT * (Basis(q) * _imu_manual))
 	_ground_to_floor()
+
+
+# ============================================================================
+# AUTO-SETTLE — ratakan tumpuan (kaki/tangan) ke lantai secara kinematik.
+# Fit bidang ke titik kontak terendah lalu putar badan agar bidang itu datar:
+# berdiri → dua kaki menapak; push-up → tangan & kaki menapak. Damped + dibatasi
+# (~35°) agar stabil; nonaktif saat IMU aktif (orientasi nyata yang dipakai).
+# ============================================================================
+func set_auto_settle(on: bool) -> void:
+	_auto_settle = on
+	if not on:
+		_settle = Basis()
+	_update_base()
+
+
+func is_auto_settle() -> bool:
+	return _auto_settle
+
+
+func _settle_step() -> void:
+	var inv := global_transform.affine_inverse()
+	var pts: Array[Vector3] = []
+	for ln in CONTACT_LINKS:
+		var node: Node3D = _links.get(ln)
+		if node == null:
+			continue
+		var box := _combined_aabb(node, inv)
+		if box.size == Vector3.ZERO:
+			continue
+		pts.append(Vector3(box.position.x + box.size.x * 0.5, box.position.y,
+			box.position.z + box.size.z * 0.5))
+	if pts.size() < 2:
+		_update_base()
+		return
+	var min_y := INF
+	for p in pts:
+		min_y = minf(min_y, p.y)
+	var sup: Array[Vector3] = []
+	for p in pts:
+		if p.y <= min_y + 0.03:
+			sup.append(p)
+	if sup.size() < 2:
+		_update_base()
+		return
+	var c := Vector3.ZERO
+	for p in sup:
+		c += p
+	c /= float(sup.size())
+	# slope bidang  y = a*x + b*z  (relatif centroid)
+	var a := 0.0
+	var b := 0.0
+	if sup.size() >= 3:
+		var sxx := 0.0; var sxz := 0.0; var szz := 0.0; var sxy := 0.0; var szy := 0.0
+		for p in sup:
+			var dx := p.x - c.x; var dz := p.z - c.z; var dy := p.y - c.y
+			sxx += dx * dx; sxz += dx * dz; szz += dz * dz
+			sxy += dx * dy; szy += dz * dy
+		var det := sxx * szz - sxz * sxz
+		if absf(det) > 1e-8:
+			a = (sxy * szz - szy * sxz) / det
+			b = (szy * sxx - sxy * sxz) / det
+	else:
+		var d := sup[1] - sup[0]
+		var hl := Vector2(d.x, d.z).length()
+		if hl > 1e-4:
+			var slope := d.y / hl
+			a = slope * d.x / hl
+			b = slope * d.z / hl
+	var damp := 0.3
+	var rot_z := clampf(-atan(a) * damp, -0.12, 0.12)
+	var rot_x := clampf(atan(b) * damp, -0.12, 0.12)
+	if absf(rot_z) > 0.0004 or absf(rot_x) > 0.0004:
+		var delta := Basis().rotated(Vector3(1, 0, 0), rot_x).rotated(Vector3(0, 0, 1), rot_z)
+		var cand := (delta * _settle).orthonormalized()
+		if cand.get_euler().length() < 0.62:   # batas miring total ~35°
+			_settle = cand
+	_update_base()
 
 
 # ============================================================================
