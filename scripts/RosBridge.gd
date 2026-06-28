@@ -48,6 +48,11 @@ const INI_POSE_TOPIC := "/robotis/base/ini_pose"      # ke pose awal/ready
 const INI_POSE_TYPE  := "std_msgs/msg/String"
 const ENABLE_MODULE_TOPIC := "/robotis/enable_ctrl_module"  # pilih control module
 const ENABLE_MODULE_TYPE  := "std_msgs/msg/String"
+# Walking tuner (op3_walking_module) — mirror GUI op3_demo
+const WALK_CMD_TOPIC := "/robotis/walking/command"          # start/stop/save/balance on|off
+const WALK_CMD_TYPE  := "std_msgs/msg/String"
+const WALK_PARAM_TOPIC := "/robotis/walking/set_params"
+const WALK_PARAM_TYPE  := "op3_walking_module_msgs/msg/WalkingParam"
 const CMD_TOPIC := "/robotis/set_joint_states"
 const CMD_TYPE  := "sensor_msgs/msg/JointState"
 const RECONNECT_SEC := 3.0
@@ -264,6 +269,21 @@ func enable_ctrl_module(module_name: String) -> void:
 		return
 	_advertise(ENABLE_MODULE_TOPIC, ENABLE_MODULE_TYPE)
 	_send({"op": "publish", "topic": ENABLE_MODULE_TOPIC, "msg": {"data": module_name}})
+
+
+# --- Walking tuner -----------------------------------------------------------
+func walk_command(cmd: String) -> void:
+	if not is_open():
+		return
+	_advertise(WALK_CMD_TOPIC, WALK_CMD_TYPE)
+	_send({"op": "publish", "topic": WALK_CMD_TOPIC, "msg": {"data": cmd}})
+
+
+func set_walking_params(p: Dictionary) -> void:
+	if not is_open():
+		return
+	_advertise(WALK_PARAM_TOPIC, WALK_PARAM_TYPE)
+	_send({"op": "publish", "topic": WALK_PARAM_TOPIC, "msg": p})
 
 
 # Kirim perintah joint ke robot (arah operator -> robot).

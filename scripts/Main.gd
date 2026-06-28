@@ -255,6 +255,12 @@ func _build_layout() -> void:
 	nav_content.add_child(ae_wrap)
 	nav_pages["action"] = ae_wrap
 
+	# Halaman: Walking Parameter (mirror GUI op3_demo)
+	var walk_wrap := _build_walking_page()
+	walk_wrap.set_anchors_preset(Control.PRESET_FULL_RECT)
+	nav_content.add_child(walk_wrap)
+	nav_pages["walking"] = walk_wrap
+
 	# Halaman: Logs
 	var log_wrap := _build_logs_page()
 	log_wrap.set_anchors_preset(Control.PRESET_FULL_RECT)
@@ -1023,7 +1029,7 @@ func _update_info_column() -> void:
 var nav_content: Control
 var nav_pages := {}
 var nav_buttons := {}
-const NAV_ITEMS := [["monitor", "Overview", "⌂"], ["action", "Action", "✎"], ["logs", "Logs", "≣"]]
+const NAV_ITEMS := [["monitor", "Overview", "⌂"], ["action", "Action", "✎"], ["walking", "Walking", "Π"], ["logs", "Logs", "≣"]]
 
 func _build_nav_rail() -> Control:
 	var rail := PanelContainer.new()
@@ -1321,6 +1327,185 @@ func _log(text: String) -> void:
 	_log_box.move_child(l, 0)
 	while _log_box.get_child_count() > 60:
 		_log_box.get_child(_log_box.get_child_count() - 1).queue_free()
+
+
+# ----------------------------------------------------------------------------
+# WALKING — tuner gait OP3 (mirror op3_demo): Initial Pose · Walking Parameter ·
+# Balance + Apply/Save + Start/Stop. Apply → /robotis/walking/set_params.
+# ----------------------------------------------------------------------------
+var walk_fields := {}        # key -> SpinBox
+var walk_move_aim: CheckBox
+var walk_balance: CheckBox
+const WALK_ANGLE_KEYS := ["init_roll_offset", "init_pitch_offset", "init_yaw_offset",
+	"hip_pitch_offset", "angle_move_amplitude", "pelvis_offset"]
+
+func _build_walking_page() -> Control:
+	var panel := PanelContainer.new()
+	var sc := ScrollContainer.new()
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	panel.add_child(sc)
+	var mc := MarginContainer.new()
+	mc.add_theme_constant_override("margin_left", 14)
+	mc.add_theme_constant_override("margin_right", 14)
+	mc.add_theme_constant_override("margin_top", 14)
+	mc.add_theme_constant_override("margin_bottom", 14)
+	mc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sc.add_child(mc)
+	var vb := VBoxContainer.new()
+	vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vb.add_theme_constant_override("separation", 9)
+	mc.add_child(vb)
+
+	var ttl := Label.new()
+	ttl.text = "Walking Parameter"
+	ttl.add_theme_font_size_override("font_size", 15)
+	if font_bold:
+		ttl.add_theme_font_override("font", font_bold)
+	ttl.add_theme_color_override("font_color", COL_TEXT)
+	vb.add_child(ttl)
+	var note := Label.new()
+	note.text = "Tuner gait OP3 (mirror op3_demo). Apply → /robotis/walking/set_params. Butuh module 'walking_module' aktif."
+	note.add_theme_color_override("font_color", COL_MUTED)
+	note.add_theme_font_size_override("font_size", 11)
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(note)
+
+	vb.add_child(_info_section("INITIAL POSE"))
+	var g1 := _walk_grid()
+	vb.add_child(g1)
+	_walk_field(g1, "X (m)", "init_x_offset", -0.02, -0.1, 0.1, 0.001)
+	_walk_field(g1, "Y (m)", "init_y_offset", 0.02, -0.1, 0.1, 0.001)
+	_walk_field(g1, "Z (m)", "init_z_offset", 0.035, 0.0, 0.12, 0.001)
+	_walk_field(g1, "Roll (°)", "init_roll_offset", 0.0, -30, 30, 0.5)
+	_walk_field(g1, "Pitch (°)", "init_pitch_offset", 0.0, -30, 30, 0.5)
+	_walk_field(g1, "Yaw (°)", "init_yaw_offset", 0.0, -30, 30, 0.5)
+	_walk_field(g1, "Hip Pitch Offset (°)", "hip_pitch_offset", 0.0, -30, 30, 0.5)
+
+	vb.add_child(_info_section("WALKING PARAMETER"))
+	var g2 := _walk_grid()
+	vb.add_child(g2)
+	_walk_field(g2, "Period Time (ms)", "period_time", 700, 100, 2000, 10)
+	_walk_field(g2, "DSP Ratio", "dsp_ratio", 0.20, 0, 1, 0.01)
+	_walk_field(g2, "Step FB Ratio", "step_fb_ratio", 0.28, 0, 1, 0.01)
+	_walk_field(g2, "X Move Amp (m)", "x_move_amplitude", 0.0, -0.1, 0.1, 0.001)
+	_walk_field(g2, "Y Move Amp (m)", "y_move_amplitude", 0.0, -0.1, 0.1, 0.001)
+	_walk_field(g2, "Z Move Amp (m)", "z_move_amplitude", 0.06, 0, 0.1, 0.001)
+	_walk_field(g2, "Yaw Move Amp (°)", "angle_move_amplitude", 0.0, -50, 50, 1)
+	walk_move_aim = CheckBox.new()
+	walk_move_aim.text = "Move Aim On"
+	walk_move_aim.add_theme_color_override("font_color", COL_TEXT)
+	vb.add_child(walk_move_aim)
+
+	vb.add_child(_info_section("BALANCE CONTROL"))
+	walk_balance = CheckBox.new()
+	walk_balance.text = "Balance On"
+	walk_balance.add_theme_color_override("font_color", COL_TEXT)
+	vb.add_child(walk_balance)
+	var g3 := _walk_grid()
+	vb.add_child(g3)
+	_walk_field(g3, "Hip Roll Gain", "balance_hip_roll_gain", 0.35, 0, 2, 0.01)
+	_walk_field(g3, "Knee Gain", "balance_knee_gain", 0.30, 0, 2, 0.01)
+	_walk_field(g3, "Ankle Roll Gain", "balance_ankle_roll_gain", 0.70, 0, 2, 0.01)
+	_walk_field(g3, "Ankle Pitch Gain", "balance_ankle_pitch_gain", 0.90, 0, 2, 0.01)
+	_walk_field(g3, "Y Swap Amp (m)", "y_swap_amplitude", 0.028, 0, 0.1, 0.001)
+	_walk_field(g3, "Z Swap Amp (m)", "z_swap_amplitude", 0.006, 0, 0.1, 0.001)
+	_walk_field(g3, "Arm Swing Gain", "arm_swing_gain", 0.20, 0, 2, 0.01)
+	_walk_field(g3, "Pelvis Offset (°)", "pelvis_offset", 0.0, -10, 10, 0.1)
+
+	var br := HBoxContainer.new()
+	br.add_theme_constant_override("separation", 6)
+	var save := Button.new()
+	save.text = "Save"
+	save.focus_mode = Control.FOCUS_NONE
+	save.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	save.pressed.connect(_walk_cmd.bind("save"))
+	br.add_child(save)
+	var apply := Button.new()
+	apply.text = "Apply"
+	apply.focus_mode = Control.FOCUS_NONE
+	apply.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var ab := _rounded(Color(0.933, 0.941, 1.0), 9)
+	ab.border_color = COL_ACCENT
+	ab.border_width_left = 1; ab.border_width_right = 1
+	ab.border_width_top = 1; ab.border_width_bottom = 1
+	apply.add_theme_stylebox_override("normal", ab)
+	apply.add_theme_color_override("font_color", COL_ACCENT)
+	apply.pressed.connect(_walk_apply)
+	br.add_child(apply)
+	vb.add_child(br)
+
+	var cr := HBoxContainer.new()
+	cr.add_theme_constant_override("separation", 6)
+	var start := Button.new()
+	start.text = "▶ Start"
+	start.focus_mode = Control.FOCUS_NONE
+	start.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	start.pressed.connect(_walk_cmd.bind("start"))
+	cr.add_child(start)
+	var stop := Button.new()
+	stop.text = "■ Stop"
+	stop.focus_mode = Control.FOCUS_NONE
+	stop.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	stop.add_theme_color_override("font_color", Color(0.937, 0.416, 0.416))
+	stop.pressed.connect(_walk_cmd.bind("stop"))
+	cr.add_child(stop)
+	vb.add_child(cr)
+	return panel
+
+
+func _walk_grid() -> GridContainer:
+	var g := GridContainer.new()
+	g.columns = 2
+	g.add_theme_constant_override("h_separation", 16)
+	g.add_theme_constant_override("v_separation", 6)
+	g.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	return g
+
+
+func _walk_field(grid: GridContainer, label: String, key: String, val: float, mn: float, mx: float, stp: float) -> void:
+	var cell := VBoxContainer.new()
+	cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var l := Label.new()
+	l.text = label
+	l.add_theme_font_size_override("font_size", 9)
+	l.add_theme_color_override("font_color", COL_MUTED)
+	cell.add_child(l)
+	var sb := SpinBox.new()
+	sb.min_value = mn
+	sb.max_value = mx
+	sb.step = stp
+	sb.value = val
+	sb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cell.add_child(sb)
+	grid.add_child(cell)
+	walk_fields[key] = sb
+
+
+func _walk_apply() -> void:
+	if ros_bridge == null or not ros_bridge.is_open():
+		_log("Walking apply gagal — belum konek robot")
+		return
+	var p := {}
+	for k in walk_fields:
+		p[k] = walk_fields[k].value
+	for k in WALK_ANGLE_KEYS:
+		if p.has(k):
+			p[k] = deg_to_rad(p[k])   # msg pakai radian
+	p["move_aim_on"] = walk_move_aim.button_pressed if walk_move_aim else false
+	p["balance_enable"] = walk_balance.button_pressed if walk_balance else false
+	p["p_gain"] = 0
+	p["i_gain"] = 0
+	p["d_gain"] = 0
+	ros_bridge.set_walking_params(p)
+	_log("Walking: apply params")
+
+
+func _walk_cmd(cmd: String) -> void:
+	if ros_bridge == null or not ros_bridge.is_open():
+		_log("Walking '%s' gagal — belum konek" % cmd)
+		return
+	ros_bridge.walk_command(cmd)
+	_log("Walking: %s" % cmd)
 
 
 # ----------------------------------------------------------------------------
