@@ -11,6 +11,7 @@ const CameraOrbitScript = preload("res://scripts/CameraOrbit.gd")
 const JointManipScript  = preload("res://scripts/JointManipulator.gd")
 const ViewCubeScript    = preload("res://scripts/ViewCube.gd")
 const RosBridgeScript   = preload("res://scripts/RosBridge.gd")
+const RingGaugeScript   = preload("res://scripts/RingGauge.gd")
 
 # --- Palet "Daylight" clean-pastel (selaras design-system/ds.css) -----------
 # Aksen dipakai tipis (status/kategori), bukan membanjiri layar. Bayangan
@@ -213,13 +214,17 @@ func _build_layout() -> void:
 	var toolbar := _build_toolbar()
 	add_child(toolbar)
 
+	# Strip ALUR (Connect → Activate → Ready → Action Editor)
+	var flow := _build_flow_strip()
+	add_child(flow)
+
 	# Split container utama
 	var split := HSplitContainer.new()
 	split.anchor_top = 0.0
 	split.anchor_left = 0.0
 	split.anchor_right = 1.0
 	split.anchor_bottom = 1.0
-	split.offset_top = 56  # ruang untuk toolbar
+	split.offset_top = 98  # ruang untuk toolbar (56) + strip alur
 	split.offset_left = 8
 	split.offset_right = -8
 	split.offset_bottom = -8
@@ -235,9 +240,14 @@ func _build_layout() -> void:
 	sensor_panel.set_script(SensorPanelScript)
 	left_wrapper.add_child(sensor_panel)
 
-	# === KANAN: 3D Viewport dengan OP3 Robot ===
+	# === KANAN: 3D Viewport + kolom info (gauges · inspector · joints) ===
+	var right_area := HBoxContainer.new()
+	right_area.add_theme_constant_override("separation", 8)
+	split.add_child(right_area)
+
 	var right_wrapper := PanelContainer.new()
-	split.add_child(right_wrapper)
+	right_wrapper.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	right_area.add_child(right_wrapper)
 
 	var right_vbox := VBoxContainer.new()
 	right_vbox.add_theme_constant_override("separation", 4)
@@ -275,6 +285,10 @@ func _build_layout() -> void:
 	view_cube.position = Vector2(-118, 12)
 	vp_wrap.add_child(view_cube)
 	view_cube.setup(orbit_camera)
+
+	# Kolom info kanan (sesuai mockup: ring gauge + inspector + joints)
+	var info_col := _build_info_column()
+	right_area.add_child(info_col)
 
 
 func _build_toolbar() -> Control:
@@ -368,6 +382,21 @@ func _build_toolbar() -> Control:
 	mode_btn.pressed.connect(_toggle_mode)
 	hb.add_child(mode_btn)
 	_refresh_mode_btn()
+
+	# E-Stop (merah, terisolasi) — torque OFF semua + stop motion
+	var estop := Button.new()
+	estop.text = "■ E-STOP"
+	estop.focus_mode = Control.FOCUS_NONE
+	estop.custom_minimum_size = Vector2(94, 30)
+	estop.tooltip_text = "Hentikan darurat: torque OFF semua servo"
+	var esb := _rounded(Color(0.992, 0.922, 0.922), 9)
+	esb.border_color = Color(0.957, 0.761, 0.761)
+	esb.border_width_left = 1; esb.border_width_right = 1
+	esb.border_width_top = 1; esb.border_width_bottom = 1
+	estop.add_theme_stylebox_override("normal", esb)
+	estop.add_theme_color_override("font_color", Color(0.937, 0.416, 0.416))
+	estop.pressed.connect(_on_estop)
+	hb.add_child(estop)
 
 	var build_label := Label.new()
 	build_label.text = "v0.2 · 20 DOF"
@@ -655,6 +684,7 @@ func _act_set_module() -> void:
 
 func _act_sequence() -> void:
 	if not _act_ready(): return
+	_set_flow_state(2)
 	ros_bridge.send_torque(_act_joint_names(), true)
 	_set_act_status("Torque ON…")
 	await get_tree().create_timer(0.5).timeout
@@ -664,6 +694,7 @@ func _act_sequence() -> void:
 	var m := activate_module_opt.get_item_text(activate_module_opt.selected)
 	ros_bridge.enable_ctrl_module(m)
 	_set_act_status("Aktif · module: %s" % m)
+	_set_flow_state(3)
 
 
 func _on_robot_status(level: int, module_name: String, text: String) -> void:
@@ -676,6 +707,285 @@ func _on_robot_status(level: int, module_name: String, text: String) -> void:
 		c = Color(0.878, 0.604, 0.208)
 	activate_status_lbl.add_theme_color_override("font_color", c)
 	activate_status_lbl.text = "Status: [%s] %s" % [module_name, text]
+
+
+# ----------------------------------------------------------------------------
+# STRIP ALUR — Connect → Activate → Ready → Action Editor (state terlihat).
+# ----------------------------------------------------------------------------
+var _flow_state := 0
+var flow_chips := []
+var flow_lbls := []
+const FLOW_STEPS := ["1 · Connect", "2 · Activate", "3 · Ready", "4 · Action Editor"]
+
+func _build_flow_strip() -> Control:
+	var bar := PanelContainer.new()
+	bar.anchor_left = 0; bar.anchor_right = 1.0
+	bar.offset_left = 8; bar.offset_right = -8
+	bar.offset_top = 58; bar.offset_bottom = 92
+	var sb := _rounded(COL_PANEL, 8)
+	sb.border_color = COL_BORDER
+	sb.border_width_left = 1; sb.border_width_right = 1
+	sb.border_width_top = 1; sb.border_width_bottom = 1
+	bar.add_theme_stylebox_override("panel", sb)
+	var hb := HBoxContainer.new()
+	hb.add_theme_constant_override("separation", 6)
+	bar.add_child(hb)
+	var lead := Label.new()
+	lead.text = "ALUR"
+	lead.add_theme_color_override("font_color", COL_MUTED)
+	if font_bold:
+		lead.add_theme_font_override("font", font_bold)
+	hb.add_child(lead)
+	for i in range(FLOW_STEPS.size()):
+		var chip := PanelContainer.new()
+		var mc := MarginContainer.new()
+		mc.add_theme_constant_override("margin_left", 12)
+		mc.add_theme_constant_override("margin_right", 12)
+		mc.add_theme_constant_override("margin_top", 3)
+		mc.add_theme_constant_override("margin_bottom", 3)
+		var cl := Label.new()
+		cl.text = FLOW_STEPS[i]
+		cl.add_theme_font_size_override("font_size", 12)
+		mc.add_child(cl)
+		chip.add_child(mc)
+		hb.add_child(chip)
+		flow_chips.append(chip)
+		flow_lbls.append(cl)
+		if i < FLOW_STEPS.size() - 1:
+			var ar := Label.new()
+			ar.text = "›"
+			ar.add_theme_color_override("font_color", COL_MUTED)
+			hb.add_child(ar)
+	_refresh_flow()
+	return bar
+
+
+func _set_flow_state(s: int) -> void:
+	s = clampi(s, 0, 3)
+	if s == _flow_state:
+		return
+	_flow_state = s
+	_refresh_flow()
+
+
+func _refresh_flow() -> void:
+	for i in range(flow_chips.size()):
+		var active: bool = i == _flow_state
+		var done: bool = i < _flow_state
+		var col := COL_MUTED
+		var bg := COL_BG
+		if active:
+			col = COL_ACCENT
+			bg = Color(0.933, 0.941, 1.0)
+		elif done:
+			col = Color(0.184, 0.722, 0.541)
+			bg = Color(0.902, 0.965, 0.937)
+		var cs := _rounded(bg, 7)
+		if active:
+			cs.border_color = COL_ACCENT
+			cs.border_width_left = 1; cs.border_width_right = 1
+			cs.border_width_top = 1; cs.border_width_bottom = 1
+		flow_chips[i].add_theme_stylebox_override("panel", cs)
+		flow_lbls[i].add_theme_color_override("font_color", col)
+		flow_lbls[i].text = ("✓ " + FLOW_STEPS[i]) if done else FLOW_STEPS[i]
+
+
+func _on_estop() -> void:
+	if ros_bridge and ros_bridge.is_open():
+		ros_bridge.send_torque(robot.get_joint_names() if robot else [], false)
+	if robot and robot.has_method("stop_motion"):
+		robot.stop_motion()
+	_set_flow_state(1 if (ros_bridge and ros_bridge.is_open()) else 0)
+
+
+# ----------------------------------------------------------------------------
+# KOLOM INFO KANAN — ring gauge + inspector + daftar joints (sesuai mockup).
+# ----------------------------------------------------------------------------
+var info_gauges := {}
+var insp_lbls := {}
+var joints_list_box: VBoxContainer
+var joints_rows := {}
+
+func _build_info_column() -> Control:
+	var wrap := PanelContainer.new()
+	wrap.custom_minimum_size = Vector2(300, 0)
+	var sc := ScrollContainer.new()
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	wrap.add_child(sc)
+	var mc := MarginContainer.new()
+	mc.add_theme_constant_override("margin_left", 12)
+	mc.add_theme_constant_override("margin_right", 12)
+	mc.add_theme_constant_override("margin_top", 12)
+	mc.add_theme_constant_override("margin_bottom", 12)
+	mc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sc.add_child(mc)
+	var vb := VBoxContainer.new()
+	vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vb.add_theme_constant_override("separation", 10)
+	mc.add_child(vb)
+
+	vb.add_child(_info_section("OVERVIEW"))
+	var grow := HBoxContainer.new()
+	grow.add_theme_constant_override("separation", 8)
+	grow.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	grow.add_child(_gauge_cell("drive", "DRIVE"))
+	grow.add_child(_gauge_cell("thermal", "THERMAL"))
+	grow.add_child(_gauge_cell("power", "POWER"))
+	vb.add_child(grow)
+
+	vb.add_child(_hsep())
+	vb.add_child(_info_section("INSPECTOR — JOINT TERPILIH"))
+	var nm := Label.new()
+	nm.text = "—"
+	nm.add_theme_font_size_override("font_size", 15)
+	nm.add_theme_color_override("font_color", COL_TEXT)
+	if font_bold:
+		nm.add_theme_font_override("font", font_bold)
+	vb.add_child(nm)
+	insp_lbls["name"] = nm
+	var idl := Label.new()
+	idl.text = "klik servo di 3D untuk memilih"
+	idl.add_theme_font_size_override("font_size", 11)
+	idl.add_theme_color_override("font_color", COL_MUTED)
+	vb.add_child(idl)
+	insp_lbls["id"] = idl
+	var grid := GridContainer.new()
+	grid.columns = 2
+	grid.add_theme_constant_override("h_separation", 18)
+	grid.add_theme_constant_override("v_separation", 6)
+	insp_lbls["pos"] = _kv(grid, "POSITION", "—")
+	insp_lbls["goal"] = _kv(grid, "GOAL", "—")
+	vb.add_child(grid)
+	var arow := HBoxContainer.new()
+	arow.add_theme_constant_override("separation", 6)
+	var home := Button.new()
+	home.text = "⌂ Home"
+	home.focus_mode = Control.FOCUS_NONE
+	home.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	home.pressed.connect(_info_home)
+	arow.add_child(home)
+	var cal := Button.new()
+	cal.text = "⚙ Calibrate"
+	cal.focus_mode = Control.FOCUS_NONE
+	cal.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cal.tooltip_text = "(menyusul) offset tuning per-servo"
+	arow.add_child(cal)
+	vb.add_child(arow)
+
+	vb.add_child(_hsep())
+	vb.add_child(_info_section("JOINTS"))
+	joints_list_box = VBoxContainer.new()
+	joints_list_box.add_theme_constant_override("separation", 3)
+	vb.add_child(joints_list_box)
+	return wrap
+
+
+func _info_section(text: String) -> Label:
+	var l := Label.new()
+	l.text = text
+	l.add_theme_font_size_override("font_size", 10)
+	l.add_theme_color_override("font_color", COL_MUTED)
+	return l
+
+
+func _hsep() -> Control:
+	var s := ColorRect.new()
+	s.color = COL_BORDER
+	s.custom_minimum_size = Vector2(0, 1)
+	return s
+
+
+func _gauge_cell(key: String, label: String) -> Control:
+	var cell := VBoxContainer.new()
+	cell.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	var g := RingGaugeScript.new()
+	g.custom_minimum_size = Vector2(60, 60)
+	g.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	cell.add_child(g)
+	info_gauges[key] = g
+	var l := Label.new()
+	l.text = label
+	l.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	l.add_theme_font_size_override("font_size", 10)
+	l.add_theme_color_override("font_color", COL_MUTED)
+	cell.add_child(l)
+	return cell
+
+
+func _kv(grid: GridContainer, k: String, v: String) -> Label:
+	var cell := VBoxContainer.new()
+	var kl := Label.new()
+	kl.text = k
+	kl.add_theme_font_size_override("font_size", 9)
+	kl.add_theme_color_override("font_color", COL_MUTED)
+	cell.add_child(kl)
+	var vl := Label.new()
+	vl.text = v
+	vl.add_theme_font_size_override("font_size", 14)
+	vl.add_theme_color_override("font_color", COL_TEXT)
+	cell.add_child(vl)
+	grid.add_child(cell)
+	return vl
+
+
+func _info_home() -> void:
+	if robot == null or manipulator == null:
+		return
+	var sel: String = manipulator.get_selected() if manipulator.has_method("get_selected") else ""
+	if sel != "" and robot.has_method("reset_joint"):
+		robot.reset_joint(sel)
+
+
+func _ensure_joint_rows() -> void:
+	if not joints_rows.is_empty() or joints_list_box == null or robot == null:
+		return
+	if not robot.has_method("get_joint_names"):
+		return
+	for jn in robot.get_joint_names():
+		var row := HBoxContainer.new()
+		row.add_theme_constant_override("separation", 8)
+		var dot := Panel.new()
+		dot.custom_minimum_size = Vector2(7, 7)
+		dot.add_theme_stylebox_override("panel", _rounded(Color(0.184, 0.722, 0.541), 4))
+		var dc := CenterContainer.new()
+		dc.add_child(dot)
+		row.add_child(dc)
+		var nm := Label.new()
+		nm.text = jn
+		nm.add_theme_font_size_override("font_size", 11)
+		nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		row.add_child(nm)
+		var val := Label.new()
+		val.text = "0°"
+		val.add_theme_font_size_override("font_size", 11)
+		val.add_theme_color_override("font_color", COL_MUTED)
+		row.add_child(val)
+		joints_list_box.add_child(row)
+		joints_rows[jn] = {"val": val}
+
+
+func _update_info_column() -> void:
+	if robot == null:
+		return
+	var is_open: bool = ros_bridge != null and ros_bridge.is_open()
+	if is_open and _flow_state == 0:
+		_set_flow_state(1)
+	elif not is_open and _flow_state != 0:
+		_set_flow_state(0)
+	if info_gauges.has("drive"):
+		info_gauges["drive"].set_gauge(0.42, "42%", Color(0.435, 0.482, 0.941))
+		info_gauges["thermal"].set_gauge(0.55, "44°", Color(0.878, 0.604, 0.208))
+		info_gauges["power"].set_gauge(0.87, "87%", Color(0.184, 0.722, 0.541))
+	var sel: String = manipulator.get_selected() if (manipulator and manipulator.has_method("get_selected")) else ""
+	if sel != "" and robot.joints.has(sel):
+		insp_lbls["name"].text = sel
+		if robot.has_method("get_servo_id"):
+			insp_lbls["id"].text = "ID %02d · %s" % [robot.get_servo_id(sel), robot.get_servo_part(sel)]
+		insp_lbls["pos"].text = "%+.1f°" % rad_to_deg(robot.get_joint_angle(sel))
+		insp_lbls["goal"].text = "%+.1f°" % robot.get_default_angle_deg(sel)
+	_ensure_joint_rows()
+	for jn in joints_rows:
+		joints_rows[jn]["val"].text = "%+.0f°" % rad_to_deg(robot.get_joint_angle(jn))
 
 
 # ----------------------------------------------------------------------------
@@ -938,6 +1248,8 @@ func _process(_delta: float) -> void:
 		# Sinkronkan posisi joint ke panel (slider & angka ikut)
 		if sensor_panel.has_method("update_from_robot"):
 			sensor_panel.update_from_robot(robot)
+
+	_update_info_column()
 
 
 func _drive_live() -> void:
