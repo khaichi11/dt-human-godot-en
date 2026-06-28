@@ -20,6 +20,7 @@ signal joints_received(joints: Dictionary)     # nama_joint -> radian
 signal health_received(health: Dictionary)     # nama_joint -> "ok"|"warn"|"fault"
 signal vision_received(detections: Array)      # [{label, conf, rect:Rect2 0..1}]
 signal camera_received(tex: Texture2D)         # frame kamera kepala (JPEG decode)
+signal imu_received(orientation: Quaternion, gyro: Vector3, accel: Vector3)  # /robotis/open_cr/imu
 
 const SUB_TOPIC := "/robotis/present_joint_states"
 const SUB_TYPE  := "sensor_msgs/msg/JointState"
@@ -34,6 +35,9 @@ const VISION_TOPIC := "/dt/vision/detections"  # std_msgs/String JSON:
 const VISION_TYPE  := "std_msgs/msg/String"
 const CAM_TOPIC := "/usb_cam/image_raw/compressed"
 const CAM_TYPE  := "sensor_msgs/msg/CompressedImage"  # field data = base64 JPEG
+# IMU OpenCR (robot-side: open_cr_module publish orientasi+gyro+accel, frame body_link)
+const IMU_TOPIC := "/robotis/open_cr/imu"
+const IMU_TYPE  := "sensor_msgs/msg/Imu"
 const CMD_TOPIC := "/robotis/set_joint_states"
 const CMD_TYPE  := "sensor_msgs/msg/JointState"
 const RECONNECT_SEC := 3.0
@@ -80,6 +84,7 @@ func _process(delta: float) -> void:
 				_send({"op": "subscribe", "topic": HEALTH_TOPIC, "type": HEALTH_TYPE})
 				_send({"op": "subscribe", "topic": VISION_TOPIC, "type": VISION_TYPE})
 				_send({"op": "subscribe", "topic": CAM_TOPIC, "type": CAM_TYPE})
+				_send({"op": "subscribe", "topic": IMU_TOPIC, "type": IMU_TYPE})
 				_subscribed = true
 				emit_signal("status_changed", "open")
 			while _ws.get_available_packet_count() > 0:
@@ -117,6 +122,9 @@ func _handle_message(text: String) -> void:
 		return
 	if topic == CAM_TOPIC:
 		_handle_camera(data.get("msg", {}))
+		return
+	if topic == IMU_TOPIC:
+		_handle_imu(data.get("msg", {}))
 		return
 	if topic != SUB_TOPIC:
 		return
@@ -184,6 +192,20 @@ func _handle_camera(msg: Dictionary) -> void:
 	if err != OK:
 		return
 	emit_signal("camera_received", ImageTexture.create_from_image(img))
+
+
+# IMU OpenCR (sensor_msgs/Imu). orientation = quaternion badan (frame ROS).
+func _handle_imu(msg: Dictionary) -> void:
+	var o: Dictionary = msg.get("orientation", {})
+	var g: Dictionary = msg.get("angular_velocity", {})
+	var a: Dictionary = msg.get("linear_acceleration", {})
+	var q := Quaternion(
+		float(o.get("x", 0.0)), float(o.get("y", 0.0)),
+		float(o.get("z", 0.0)), float(o.get("w", 1.0)))
+	q = q.normalized() if q.length_squared() > 0.000001 else Quaternion.IDENTITY
+	var gyro := Vector3(float(g.get("x", 0.0)), float(g.get("y", 0.0)), float(g.get("z", 0.0)))
+	var accel := Vector3(float(a.get("x", 0.0)), float(a.get("y", 0.0)), float(a.get("z", 0.0)))
+	emit_signal("imu_received", q, gyro, accel)
 
 
 # Kirim perintah joint ke robot (arah operator -> robot).

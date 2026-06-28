@@ -171,6 +171,7 @@ var battery_status_lbl: Label
 var imu_gyro_lbls := {}     # "x"/"y"/"z" => Label
 var imu_accel_lbls := {}
 var imu_orient_lbls := {}   # "roll"/"pitch"/"yaw"
+var _imu_live := false      # true bila data IMU nyata masuk (matikan mock)
 
 var joint_angle_lbls := {}  # joint_name => Label
 var joint_temp_lbls := {}   # joint_name => Label (kosong jika tak ditampilkan)
@@ -565,6 +566,23 @@ func _refresh_vision() -> void:
 
 
 # Called by Main on connection/data changes. connected = live link to physical.
+# Data IMU nyata dari rosbridge (RPY derajat, gyro rad/s, accel m/s²).
+func set_imu_data(rpy_deg: Vector3, gyro: Vector3, accel: Vector3) -> void:
+	_imu_live = true
+	if imu_orient_lbls.has("roll"):
+		imu_orient_lbls["roll"].text  = "%+6.1f°" % rpy_deg.x
+		imu_orient_lbls["pitch"].text = "%+6.1f°" % rpy_deg.y
+		imu_orient_lbls["yaw"].text   = "%+6.1f°" % rpy_deg.z
+	if imu_gyro_lbls.has("x"):
+		imu_gyro_lbls["x"].text = "%+6.2f" % rad_to_deg(gyro.x)
+		imu_gyro_lbls["y"].text = "%+6.2f" % rad_to_deg(gyro.y)
+		imu_gyro_lbls["z"].text = "%+6.2f" % rad_to_deg(gyro.z)
+	if imu_accel_lbls.has("x"):
+		imu_accel_lbls["x"].text = "%+6.2f" % accel.x
+		imu_accel_lbls["y"].text = "%+6.2f" % accel.y
+		imu_accel_lbls["z"].text = "%+6.2f" % accel.z
+
+
 func set_sync_state(connected: bool, latency_ms: float) -> void:
 	_dt_synced = connected
 	_dt_latency_ms = latency_ms
@@ -1705,17 +1723,18 @@ func update_from_robot(robot: Node3D) -> void:
 			if graph_lbl:
 				graph_lbl.text = "%s  (°)" % gj
 
-	# 2. Mockup IMU (digerakkan dari sin/cos waktu agar kelihatan hidup)
+	# 2. IMU: pakai data nyata bila ada; jika belum, mock sin/cos biar hidup.
 	var t := Time.get_ticks_msec() / 1000.0
-	imu_gyro_lbls["x"].text  = "%+6.2f" % (sin(t * 1.7) * 12.0)
-	imu_gyro_lbls["y"].text  = "%+6.2f" % (cos(t * 1.3) * 8.0)
-	imu_gyro_lbls["z"].text  = "%+6.2f" % (sin(t * 0.9) * 4.5)
-	imu_accel_lbls["x"].text = "%+6.2f" % (sin(t * 0.5) * 0.8)
-	imu_accel_lbls["y"].text = "%+6.2f" % (-9.81 + cos(t * 0.7) * 0.3)
-	imu_accel_lbls["z"].text = "%+6.2f" % (cos(t * 0.4) * 0.6)
-	imu_orient_lbls["roll"].text  = "%+6.1f°" % (sin(t * 0.6) * 5.0)
-	imu_orient_lbls["pitch"].text = "%+6.1f°" % (cos(t * 0.5) * 3.5)
-	imu_orient_lbls["yaw"].text   = "%+6.1f°" % (sin(t * 0.2) * 30.0)
+	if not _imu_live:
+		imu_gyro_lbls["x"].text  = "%+6.2f" % (sin(t * 1.7) * 12.0)
+		imu_gyro_lbls["y"].text  = "%+6.2f" % (cos(t * 1.3) * 8.0)
+		imu_gyro_lbls["z"].text  = "%+6.2f" % (sin(t * 0.9) * 4.5)
+		imu_accel_lbls["x"].text = "%+6.2f" % (sin(t * 0.5) * 0.8)
+		imu_accel_lbls["y"].text = "%+6.2f" % (-9.81 + cos(t * 0.7) * 0.3)
+		imu_accel_lbls["z"].text = "%+6.2f" % (cos(t * 0.4) * 0.6)
+		imu_orient_lbls["roll"].text  = "%+6.1f°" % (sin(t * 0.6) * 5.0)
+		imu_orient_lbls["pitch"].text = "%+6.1f°" % (cos(t * 0.5) * 3.5)
+		imu_orient_lbls["yaw"].text   = "%+6.1f°" % (sin(t * 0.2) * 30.0)
 
 	# 3. Mockup baterai (drain pelan-pelan)
 	_battery_pct = max(0.0, _battery_pct - 0.0008)

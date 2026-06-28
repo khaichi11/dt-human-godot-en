@@ -343,6 +343,15 @@ func _build_toolbar() -> Control:
 	sep2.custom_minimum_size = Vector2(12, 0)
 	hb.add_child(sep2)
 
+	# Tombol kalibrasi IMU (orientasi badan)
+	var imu_btn := Button.new()
+	imu_btn.text = "IMU"
+	imu_btn.focus_mode = Control.FOCUS_NONE
+	imu_btn.custom_minimum_size = Vector2(60, 30)
+	imu_btn.tooltip_text = "Kalibrasi & aktifkan orientasi IMU badan"
+	imu_btn.pressed.connect(_open_imu_popup)
+	hb.add_child(imu_btn)
+
 	# Tombol mode (Atur / Live)
 	mode_btn = Button.new()
 	mode_btn.focus_mode = Control.FOCUS_NONE
@@ -377,6 +386,125 @@ func _refresh_mode_btn() -> void:
 	else:
 		mode_btn.text = "● MODE: LIVE"
 		mode_btn.add_theme_color_override("font_color", Color(0.16, 0.56, 0.47))
+
+
+# ----------------------------------------------------------------------------
+# IMU — orientasi badan dari /robotis/open_cr/imu + popup kalibrasi.
+# ----------------------------------------------------------------------------
+var imu_popup: PopupPanel
+var imu_enable_chk: CheckBox
+var imu_sliders := {}
+var imu_val_lbls := {}
+
+func _on_ros_imu(orientation: Quaternion, gyro: Vector3, accel: Vector3) -> void:
+	if robot and robot.has_method("set_imu_orientation"):
+		robot.set_imu_orientation(orientation)
+	if sensor_panel and sensor_panel.has_method("set_imu_data"):
+		var rpy := Vector3.ZERO
+		if robot and robot.has_method("get_imu_euler_deg"):
+			rpy = robot.get_imu_euler_deg()
+		sensor_panel.set_imu_data(rpy, gyro, accel)
+
+
+func _open_imu_popup() -> void:
+	if imu_popup == null:
+		_build_imu_popup()
+	imu_popup.popup_centered(Vector2i(360, 320))
+
+
+func _build_imu_popup() -> void:
+	imu_popup = PopupPanel.new()
+	var pb := _rounded(COL_PANEL, 12)
+	pb.border_color = COL_BORDER
+	pb.border_width_left = 1; pb.border_width_right = 1
+	pb.border_width_top = 1; pb.border_width_bottom = 1
+	pb.content_margin_left = 16; pb.content_margin_right = 16
+	pb.content_margin_top = 14; pb.content_margin_bottom = 14
+	imu_popup.add_theme_stylebox_override("panel", pb)
+	add_child(imu_popup)
+
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 9)
+	vb.custom_minimum_size = Vector2(328, 0)
+	imu_popup.add_child(vb)
+
+	var title := Label.new()
+	title.text = "Kalibrasi IMU"
+	title.add_theme_font_size_override("font_size", 16)
+	title.add_theme_color_override("font_color", COL_TEXT)
+	if font_bold:
+		title.add_theme_font_override("font", font_bold)
+	vb.add_child(title)
+
+	var note := Label.new()
+	note.text = "Letak/orientasi mount IMU di dada tak pasti → cocokkan manual. 'Zero now' menganggap pose robot saat ini sebagai tegak."
+	note.add_theme_color_override("font_color", COL_MUTED)
+	note.add_theme_font_size_override("font_size", 11)
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.custom_minimum_size = Vector2(300, 0)
+	vb.add_child(note)
+
+	imu_enable_chk = CheckBox.new()
+	imu_enable_chk.text = "Aktifkan orientasi IMU pada model"
+	imu_enable_chk.add_theme_color_override("font_color", COL_TEXT)
+	imu_enable_chk.toggled.connect(_on_imu_enable)
+	vb.add_child(imu_enable_chk)
+
+	var zero_btn := Button.new()
+	zero_btn.text = "⟲  Zero now (tangkap pose tegak)"
+	zero_btn.focus_mode = Control.FOCUS_NONE
+	zero_btn.pressed.connect(_on_imu_zero)
+	vb.add_child(zero_btn)
+
+	for ax in ["roll", "pitch", "yaw"]:
+		vb.add_child(_imu_slider_row(ax))
+
+
+func _imu_slider_row(ax: String) -> Control:
+	var row := VBoxContainer.new()
+	var hb := HBoxContainer.new()
+	var nm := Label.new()
+	nm.text = ax.capitalize() + " offset"
+	nm.add_theme_color_override("font_color", COL_MUTED)
+	nm.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	hb.add_child(nm)
+	var val := Label.new()
+	val.text = "+0.0°"
+	val.add_theme_color_override("font_color", COL_ACCENT)
+	hb.add_child(val)
+	imu_val_lbls[ax] = val
+	row.add_child(hb)
+	var s := HSlider.new()
+	s.min_value = -30.0
+	s.max_value = 30.0
+	s.step = 0.5
+	s.value = 0.0
+	s.custom_minimum_size = Vector2(0, 18)
+	s.value_changed.connect(_on_imu_slider)
+	imu_sliders[ax] = s
+	row.add_child(s)
+	return row
+
+
+func _on_imu_enable(on: bool) -> void:
+	if robot and robot.has_method("set_imu_enabled"):
+		robot.set_imu_enabled(on)
+
+
+func _on_imu_zero() -> void:
+	if robot and robot.has_method("imu_zero"):
+		robot.imu_zero()
+
+
+func _on_imu_slider(_v: float) -> void:
+	var r: float = imu_sliders["roll"].value
+	var p: float = imu_sliders["pitch"].value
+	var y: float = imu_sliders["yaw"].value
+	imu_val_lbls["roll"].text = "%+.1f°" % r
+	imu_val_lbls["pitch"].text = "%+.1f°" % p
+	imu_val_lbls["yaw"].text = "%+.1f°" % y
+	if robot and robot.has_method("set_imu_manual_offset"):
+		robot.set_imu_manual_offset(r, p, y)
 
 
 # ----------------------------------------------------------------------------
@@ -570,6 +698,7 @@ func _build_3d_scene() -> void:
 	ros_bridge.health_received.connect(_on_ros_health)
 	ros_bridge.vision_received.connect(_on_ros_vision)
 	ros_bridge.camera_received.connect(_on_ros_camera)
+	ros_bridge.imu_received.connect(_on_ros_imu)
 
 
 func _add_dir_light(rot_deg: Vector3, energy: float, color: Color, shadow := false) -> void:

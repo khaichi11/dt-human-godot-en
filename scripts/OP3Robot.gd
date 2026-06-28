@@ -52,6 +52,12 @@ var _hl_servo := {}             # joint_name -> MeshInstance3D (sub-mesh servo, 
 var _hl_servo_mat := {}         # joint_name -> StandardMaterial3D (overlay health)
 var _health := {}               # joint_name -> "ok" | "warn" | "fault"
 
+# --- IMU: orientasi badan nyata (/robotis/open_cr/imu) menggerakkan base -----
+var _imu_q := Quaternion.IDENTITY    # orientasi mentah terakhir (frame ROS)
+var _imu_ref := Quaternion.IDENTITY  # referensi "Zero now" (mount IMU tak pasti)
+var _imu_manual := Basis()           # offset manual roll/pitch/yaw (trial-error)
+var _imu_enabled := false
+
 # Pembedaan servo vs besi yang akurat butuh mesh dipisah per-komponen (di
 # Blender) — mesh OP3 per-link menyatukan servo+bracket. Default: hitam seragam.
 # Saat file .glb hasil cat tersedia, materialnya dipakai apa adanya (lihat
@@ -313,11 +319,27 @@ func _stand_on_floor() -> void:
 	_ground_to_floor()
 
 
+# Titik kontak kandidat: telapak kaki (ank_roll) + tangan/lengan bawah (el).
+# Robot diturunkan agar yang TERENDAH dari titik ini menapak y=0 — jadi berdiri
+# bertumpu kaki, dan saat push-up (tangan & kaki rendah) bertumpu keduanya.
+const CONTACT_LINKS := ["r_ank_roll", "l_ank_roll", "r_el", "l_el"]
+
 func _ground_to_floor() -> void:
-	var aabb := _combined_aabb(model_root, global_transform.affine_inverse())
-	if aabb.size == Vector3.ZERO:
-		return
-	model_root.position.y -= aabb.position.y
+	var inv := global_transform.affine_inverse()
+	var min_y := INF
+	for ln in CONTACT_LINKS:
+		var node: Node3D = _links.get(ln)
+		if node == null:
+			continue
+		var box := _combined_aabb(node, inv)
+		if box.size != Vector3.ZERO:
+			min_y = minf(min_y, box.position.y)
+	if min_y == INF:   # fallback: pakai seluruh badan
+		var aabb := _combined_aabb(model_root, inv)
+		if aabb.size == Vector3.ZERO:
+			return
+		min_y = aabb.position.y
+	model_root.position.y -= min_y
 
 
 func _combined_aabb(node: Node, inv_root: Transform3D) -> AABB:
@@ -334,6 +356,57 @@ func _combined_aabb(node: Node, inv_root: Transform3D) -> AABB:
 			result = result.merge(sub) if has_any else sub
 			has_any = true
 	return result
+
+
+# ============================================================================
+# IMU — orientasi badan nyata menggerakkan base robot. Karena letak/orientasi
+# mount IMU di dada tidak pasti, sediakan kalibrasi: "Zero now" menangkap pose
+# tegak sebagai referensi, plus offset manual roll/pitch/yaw untuk pencocokan.
+# ============================================================================
+func set_imu_enabled(on: bool) -> void:
+	_imu_enabled = on
+	_update_base()
+
+
+func is_imu_enabled() -> bool:
+	return _imu_enabled
+
+
+func set_imu_orientation(q_ros: Quaternion) -> void:
+	_imu_q = q_ros.normalized() if q_ros.length_squared() > 0.000001 else Quaternion.IDENTITY
+	if _imu_enabled:
+		_update_base()
+
+
+func imu_zero() -> void:
+	# Tangkap orientasi sekarang sebagai "tegak" (identity efektif).
+	_imu_ref = _imu_q
+	_update_base()
+
+
+func set_imu_manual_offset(roll_deg: float, pitch_deg: float, yaw_deg: float) -> void:
+	# Offset di frame ROS (x maju, y kiri, z atas) untuk mencocokkan mount IMU.
+	_imu_manual = Basis.from_euler(Vector3(
+		deg_to_rad(roll_deg), deg_to_rad(pitch_deg), deg_to_rad(yaw_deg)))
+	_update_base()
+
+
+func get_imu_euler_deg() -> Vector3:
+	# RPY efektif (relatif referensi) dalam derajat, untuk panel sensor.
+	var q_eff := _imu_ref.inverse() * _imu_q
+	var e := Basis(q_eff).get_euler()
+	return Vector3(rad_to_deg(e.x), rad_to_deg(e.y), rad_to_deg(e.z))
+
+
+func _update_base() -> void:
+	if model_root == null:
+		return
+	if _imu_enabled:
+		var q_eff := _imu_ref.inverse() * _imu_q       # relatif referensi tegak
+		model_root.transform.basis = ROS_TO_GODOT * (Basis(q_eff) * _imu_manual)
+	else:
+		model_root.transform.basis = ROS_TO_GODOT
+	_ground_to_floor()
 
 
 # ============================================================================
