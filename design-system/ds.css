@@ -1,0 +1,93 @@
+/* ============================================================
+   OP3 DIGITAL TWIN — "Daylight" Clean-Pastel Design Tokens
+   Untuk aplikasi PENGONTROL: tenang, bersih, terbaca.
+   - Latar terang lembut, panel putih, banyak ruang napas.
+   - Pastel dipakai SEBAGAI AKSEN tipis (status/kategori),
+     bukan membanjiri layar → tidak bikin sakit mata.
+   - Hairline border + bayangan sangat halus (clean, ala
+     Linear/Things/Mini Metro), bukan soft-shadow tebal.
+   - Tombol berlabel & terkelompok per fungsi → informatif.
+   ============================================================ */
+
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+
+:root{
+  /* --- surfaces --- */
+  --bg:        #f5f6fb;   /* app background (cool soft white)   */
+  --surface:   #ffffff;   /* card                               */
+  --surface-2: #f1f3f9;   /* inset / cell / track               */
+  --line:      #e6e9f3;   /* hairline border                    */
+  --line-2:    #d6dbeb;   /* border emphasis                    */
+
+  /* --- text (slate, kontras nyaman) --- */
+  --ink:    #2a2f3c;   /* primary                                */
+  --ink-2:  #6c7384;   /* secondary / label                      */
+  --ink-3:  #9aa1b4;   /* unit / muted / tick                    */
+
+  /* --- accent pastel BERSIH (muted, tidak neon) --- */
+  --indigo:    #6f7bf0;  /* PRIMARY (interaktif, seleksi)        */
+  --indigo-bg: #eef0ff;  /* tint latar untuk primary             */
+  --mint:      #2fb88a;  /* ok / nominal                         */
+  --mint-bg:   #e6f6ef;
+  --amber:     #e09a35;  /* warning                              */
+  --amber-bg:  #fdf3e2;
+  --coral:     #ef6a6a;  /* alarm / E-stop                       */
+  --coral-bg:  #fdebeb;
+  --teal:      #3bb6c4;  /* data kategori                        */
+  --lilac:     #9b7bf0;  /* data kategori                        */
+
+  /* --- type --- */
+  --font-ui:   'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --font-mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo, monospace;
+
+  /* --- geometry & elevation (clean) --- */
+  --r:    12px;
+  --r-sm: 8px;
+  --gap:  14px;
+  --shadow: 0 1px 2px rgba(28,33,64,.05), 0 1px 3px rgba(28,33,64,.04);
+}
+
+*{box-sizing:border-box;margin:0;padding:0}
+
+body{
+  background:var(--bg);
+  color:var(--ink);
+  font-family:var(--font-ui);
+  font-size:13px;
+  line-height:1.45;
+  -webkit-font-smoothing:antialiased;
+}
+
+.label{
+  font-size:10.5px;
+  font-weight:600;
+  letter-spacing:.04em;
+  text-transform:uppercase;
+  color:var(--ink-3);
+}
+
+.num{
+  font-family:var(--font-mono);
+  font-variant-numeric:tabular-nums;
+  font-feature-settings:"tnum" 1;
+}
+
+/* status dot — kecil, padat, tanpa glow ramai */
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;background:var(--mint)}
+.dot.warn{background:var(--amber)} .dot.alarm{background:var(--coral)} .dot.idle{background:var(--ink-3)}
+
+/* badge berlatar tint pastel — pastel yang "clean" */
+.badge{display:inline-flex;align-items:center;gap:6px;padding:3px 9px;border-radius:999px;
+  font-size:11px;font-weight:600}
+.badge.ok{background:var(--mint-bg);color:var(--mint)}
+.badge.warn{background:var(--amber-bg);color:var(--amber)}
+.badge.alarm{background:var(--coral-bg);color:var(--coral)}
+.badge.info{background:var(--indigo-bg);color:var(--indigo)}
+
+/* panel: putih, border halus, elevasi tipis */
+.panel{
+  background:var(--surface);
+  border:1px solid var(--line);
+  border-radius:var(--r);
+  box-shadow:var(--shadow);
+}

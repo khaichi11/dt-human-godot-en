@@ -1,0 +1,203 @@
+<!-- @dsCard group="Samples" name="OP3 Twin — Daylight Clean" subtitle="nav rail · status bar · gauges · inspector · log" w="1240" h="760" -->
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<title>OP3 Digital Twin — Daylight Clean</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+:root{
+  --bg:#f5f6fb;--surface:#fff;--surface-2:#f1f3f9;--line:#e6e9f3;--line-2:#d6dbeb;
+  --ink:#2a2f3c;--ink-2:#6c7384;--ink-3:#9aa1b4;
+  --indigo:#6f7bf0;--indigo-bg:#eef0ff;--mint:#2fb88a;--mint-bg:#e6f6ef;
+  --amber:#e09a35;--amber-bg:#fdf3e2;--coral:#ef6a6a;--coral-bg:#fdebeb;
+  --teal:#3bb6c4;--lilac:#9b7bf0;
+  --font-ui:'Inter',system-ui,sans-serif;--font-mono:'JetBrains Mono',ui-monospace,monospace;
+  --r:12px;--shadow:0 1px 2px rgba(28,33,64,.05),0 1px 3px rgba(28,33,64,.04);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:var(--font-ui);background:var(--bg);color:var(--ink);font-size:13px;line-height:1.45;-webkit-font-smoothing:antialiased}
+.num{font-family:var(--font-mono);font-variant-numeric:tabular-nums}
+.label{font-size:10px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3)}
+.dot{width:8px;height:8px;border-radius:50%;display:inline-block;background:var(--mint)}
+.dot.warn{background:var(--amber)}.dot.alarm{background:var(--coral)}.dot.idle{background:var(--ink-3)}
+.badge{display:inline-flex;align-items:center;gap:6px;padding:3px 10px;border-radius:999px;font-size:11px;font-weight:600}
+.badge.ok{background:var(--mint-bg);color:var(--mint)}.badge.warn{background:var(--amber-bg);color:var(--amber)}
+.badge.info{background:var(--indigo-bg);color:var(--indigo)}
+.panel{background:var(--surface);border:1px solid var(--line);border-radius:var(--r);box-shadow:var(--shadow)}
+
+.app{display:grid;grid-template-columns:80px 1fr;height:760px}
+
+/* ---------- nav rail (berlabel = informatif) ---------- */
+.rail{background:var(--surface);border-right:1px solid var(--line);display:flex;flex-direction:column;align-items:center;padding:14px 0;gap:4px}
+.rail .mark{width:36px;height:36px;border-radius:10px;background:var(--indigo);color:#fff;display:grid;place-items:center;font-weight:700;margin-bottom:14px}
+.nav{width:64px;display:flex;flex-direction:column;align-items:center;gap:3px;padding:8px 0;border-radius:10px;color:var(--ink-3);cursor:pointer;font-size:9.5px;font-weight:600}
+.nav .ic{width:22px;height:22px;border:2px solid currentColor;border-radius:6px}
+.nav.on{background:var(--indigo-bg);color:var(--indigo)}
+.nav:hover:not(.on){color:var(--ink-2)}
+
+/* ---------- main ---------- */
+.main{display:flex;flex-direction:column;min-width:0}
+.topbar{display:flex;align-items:center;gap:14px;padding:13px 20px;border-bottom:1px solid var(--line);background:var(--surface)}
+.title{font-size:15px;font-weight:600}
+.title small{display:block;font-size:10px;font-weight:600;letter-spacing:.12em;color:var(--ink-3)}
+.seg{display:flex;background:var(--surface-2);border:1px solid var(--line);border-radius:9px;padding:3px}
+.seg button{border:0;background:transparent;color:var(--ink-2);font:inherit;font-weight:600;font-size:12px;padding:5px 14px;border-radius:7px;cursor:pointer}
+.seg button.on{background:var(--surface);color:var(--indigo);box-shadow:var(--shadow)}
+.spacer{flex:1}
+.vital{display:flex;flex-direction:column;align-items:flex-end;line-height:1.2}
+.vital .label{font-size:9px}
+.vital b{font:600 13px var(--font-mono)}
+.btn{display:inline-flex;align-items:center;gap:7px;font-weight:600;font-size:12px;border-radius:9px;padding:8px 13px;cursor:pointer;border:1px solid var(--line-2);background:var(--surface);color:var(--ink-2)}
+.btn.estop{background:var(--coral-bg);color:var(--coral);border-color:#f4c2c2}
+.btn.estop::before{content:"";width:10px;height:10px;border-radius:50%;border:2.5px solid var(--coral)}
+
+.body{flex:1;display:grid;grid-template-columns:1.7fr 320px;gap:14px;padding:16px 20px;overflow:hidden}
+
+/* viewport */
+.view{position:relative;overflow:hidden;background:linear-gradient(180deg,#fbfcff,#eef1f8)}
+.view .floor{position:absolute;inset:0;background-image:linear-gradient(var(--line) 1px,transparent 1px),linear-gradient(90deg,var(--line) 1px,transparent 1px);background-size:34px 34px;opacity:.7;mask-image:radial-gradient(80% 70% at 50% 45%,#000,transparent)}
+.robot{position:absolute;left:50%;top:52%;transform:translate(-50%,-50%);width:120px;height:212px}
+.robot div{position:absolute;border-radius:13px;background:#cfd6ec;border:1px solid #bcc4e0}
+.r-head{width:50px;height:42px;left:35px;top:0}
+.r-torso{width:90px;height:90px;left:15px;top:50px;background:#c5cdea}
+.r-arm-l{width:22px;height:88px;left:-4px;top:54px}.r-arm-r{width:22px;height:88px;right:-4px;left:auto;top:54px}
+.r-leg-l{width:28px;height:72px;left:24px;top:144px}.r-leg-r{width:28px;height:72px;right:24px;left:auto;top:144px}
+.bracket{position:absolute;left:-4px;top:54px;width:22px;height:88px;border:2px solid var(--indigo);border-radius:9px;background:rgba(111,123,240,.08)}
+.bracket::after{content:"r_sho_pitch";position:absolute;top:-20px;left:-6px;white-space:nowrap;font:600 10px var(--font-mono);color:var(--indigo);background:var(--surface);padding:2px 7px;border-radius:6px;border:1px solid var(--line-2)}
+.vlabel{position:absolute;left:14px;top:14px;font-size:11px;font-weight:600;color:var(--ink-2);background:rgba(255,255,255,.8);padding:4px 9px;border-radius:7px;border:1px solid var(--line)}
+.vctrl{position:absolute;left:14px;bottom:14px;display:flex;gap:7px}
+.vctrl .btn{padding:6px 10px;font-size:11px;background:rgba(255,255,255,.85)}
+.vctrl .btn.on{color:var(--indigo);border-color:var(--indigo);background:var(--indigo-bg)}
+.cube{position:absolute;right:14px;top:14px;width:44px;height:44px;border-radius:9px;background:var(--surface);border:1px solid var(--line-2);display:grid;place-items:center;font:600 9px var(--font-ui);color:var(--ink-3);box-shadow:var(--shadow)}
+
+/* right column */
+.col{display:flex;flex-direction:column;gap:14px;overflow:hidden}
+.metrics{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+.metric{background:var(--surface);border:1px solid var(--line);border-radius:11px;padding:12px 8px;text-align:center;box-shadow:var(--shadow)}
+.ring{width:58px;height:58px;margin:2px auto 8px;border-radius:50%;display:grid;place-items:center;position:relative}
+.ring::before{content:"";position:absolute;inset:7px;border-radius:50%;background:var(--surface)}
+.ring b{position:relative;font:600 14px var(--font-mono);color:var(--ink)}
+.metric .label{font-size:9.5px}
+.metric .sub{font-size:9.5px;color:var(--ink-3);margin-top:2px}
+
+/* inspector */
+.insp h3{font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);padding:13px 15px 0}
+.insp .who{display:flex;align-items:center;justify-content:space-between;padding:4px 15px 12px;border-bottom:1px solid var(--line)}
+.insp .who b{font-size:14px}
+.insp .rows{padding:11px 15px;display:grid;grid-template-columns:1fr 1fr;gap:10px 14px}
+.insp .kv .label{font-size:9px}.insp .kv b{font:600 14px var(--font-mono)}
+.acts{display:flex;gap:8px;padding:4px 15px 14px;flex-wrap:wrap}
+.acts .btn{flex:1;justify-content:center;min-width:0}
+.acts .btn.primary{background:var(--indigo-bg);color:var(--indigo);border-color:#c9cffb}
+
+/* joint list */
+.jl{padding:6px 0 4px}
+.jl .row{display:grid;grid-template-columns:8px 1fr 54px;align-items:center;gap:10px;padding:7px 15px;cursor:pointer}
+.jl .row.sel{background:var(--indigo-bg)}
+.jl .nm{font:500 12px var(--font-ui)}
+.jl .meter{height:5px;border-radius:999px;background:var(--surface-2);overflow:hidden;margin-top:5px}
+.jl .meter i{display:block;height:100%;border-radius:999px}
+.jl .val{text-align:right;font:500 12px var(--font-mono);color:var(--ink-2)}
+
+/* log strip */
+.log{display:flex;align-items:center;gap:12px;margin:0 20px 16px;padding:10px 14px;border-radius:11px;background:var(--surface);border:1px solid var(--line);box-shadow:var(--shadow);font-size:11.5px;color:var(--ink-2);white-space:nowrap;overflow:hidden}
+.log .tag{font-weight:700;color:var(--indigo)}
+</style>
+</head>
+<body>
+<div class="app">
+
+  <!-- nav rail -->
+  <aside class="rail">
+    <div class="mark">OP</div>
+    <div class="nav on"><div class="ic"></div>Overview</div>
+    <div class="nav"><div class="ic"></div>Joints</div>
+    <div class="nav"><div class="ic"></div>Sensors</div>
+    <div class="nav"><div class="ic"></div>Vision</div>
+    <div class="nav"><div class="ic"></div>Logs</div>
+  </aside>
+
+  <!-- main -->
+  <div class="main">
+    <header class="topbar">
+      <div class="title">OP3 Digital Twin<small>OVERVIEW</small></div>
+      <span class="badge ok"><span class="dot"></span>Active</span>
+      <div class="seg"><button class="on">Auto</button><button>Manual</button></div>
+      <div class="spacer"></div>
+      <div class="vital"><span class="label">Battery</span><b style="color:var(--mint)">11.8 V</b></div>
+      <div class="vital"><span class="label">ROS2</span><b>linked</b></div>
+      <div class="vital"><span class="label">NUC</span><b>42%</b></div>
+      <button class="btn estop">E-Stop</button>
+    </header>
+
+    <div class="body">
+      <!-- viewport -->
+      <section class="panel view">
+        <div class="floor"></div>
+        <div class="vlabel">3D Twin · commanded vs measured</div>
+        <div class="robot">
+          <div class="r-head"></div><div class="r-torso"></div>
+          <div class="r-arm-l"></div><div class="r-arm-r"></div>
+          <div class="r-leg-l"></div><div class="r-leg-r"></div>
+          <div class="bracket"></div>
+        </div>
+        <div class="cube">CUBE</div>
+        <div class="vctrl">
+          <span class="btn">⌖ Orbit</span><span class="btn">⊕ Fit</span><span class="btn on">◍ Ghost overlay</span>
+        </div>
+      </section>
+
+      <!-- right column -->
+      <div class="col">
+        <div class="metrics">
+          <div class="metric">
+            <div class="ring" style="background:conic-gradient(var(--indigo) 82%,var(--surface-2) 0)"><b>82%</b></div>
+            <div class="label">Drive</div><div class="sub">load avg</div>
+          </div>
+          <div class="metric">
+            <div class="ring" style="background:conic-gradient(var(--amber) 60%,var(--surface-2) 0)"><b>39°</b></div>
+            <div class="label">Thermal</div><div class="sub">peak</div>
+          </div>
+          <div class="metric">
+            <div class="ring" style="background:conic-gradient(var(--mint) 88%,var(--surface-2) 0)"><b>OK</b></div>
+            <div class="label">Power</div><div class="sub">nominal</div>
+          </div>
+        </div>
+
+        <!-- inspector: tombol berlabel & terkelompok = informatif -->
+        <section class="panel insp">
+          <h3>Inspector — selected joint</h3>
+          <div class="who"><b>r_sho_pitch</b><span class="badge info">ID 02 · MX-28</span></div>
+          <div class="rows">
+            <div class="kv"><div class="label">Position</div><b>+43.2°</b></div>
+            <div class="kv"><div class="label">Goal</div><b>+45.0°</b></div>
+            <div class="kv"><div class="label">Load</div><b>12%</b></div>
+            <div class="kv"><div class="label">Temp</div><b>38°C</b></div>
+          </div>
+          <div class="acts">
+            <span class="btn primary">⏼ Torque</span>
+            <span class="btn">⌂ Home</span>
+            <span class="btn">⚙ Calibrate</span>
+          </div>
+        </section>
+
+        <!-- joints -->
+        <section class="panel">
+          <h3 style="font-size:11px;font-weight:600;letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);padding:13px 15px 4px">Joints · 20/20</h3>
+          <div class="jl">
+            <div class="row sel"><span class="dot"></span><div><div class="nm">r_sho_pitch</div><div class="meter"><i style="width:72%;background:var(--indigo)"></i></div></div><span class="val">+43.2°</span></div>
+            <div class="row"><span class="dot warn"></span><div><div class="nm">r_el_pitch</div><div class="meter"><i style="width:58%;background:var(--amber)"></i></div></div><span class="val">58°C</span></div>
+            <div class="row"><span class="dot"></span><div><div class="nm">head_pan</div><div class="meter"><i style="width:24%;background:var(--teal)"></i></div></div><span class="val">+02.1°</span></div>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <!-- log -->
+    <div class="log"><span class="tag">LOG</span>
+      14:57:58 ghost overlay on &nbsp;·&nbsp; 14:57:41 head_pan goal +2.1° &nbsp;·&nbsp; 14:57:12 ROS2 linked &nbsp;·&nbsp; 14:56:55 mode → Auto</div>
+  </div>
+</div>
+</body>
+</html>
