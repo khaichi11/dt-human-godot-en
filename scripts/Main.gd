@@ -12,22 +12,24 @@ const JointManipScript  = preload("res://scripts/JointManipulator.gd")
 const ViewCubeScript    = preload("res://scripts/ViewCube.gd")
 const RosBridgeScript   = preload("res://scripts/RosBridge.gd")
 
-# --- Palet pastel (dipakai bersama SensorPanel) -----------------------------
-const COL_BG       := Color(0.95, 0.94, 0.98)   # lavender-white
-const COL_PANEL    := Color(1.0, 1.0, 1.0)      # kartu/panel
-const COL_BORDER   := Color(0.91, 0.89, 0.95)
-const COL_TEXT     := Color(0.22, 0.20, 0.32)   # slate keunguan
-const COL_MUTED    := Color(0.53, 0.51, 0.63)   # teks sekunder
-const COL_ACCENT   := Color(0.55, 0.45, 0.86)   # pastel ungu (aksen utama)
-const COL_VIEW_BG  := Color(0.92, 0.91, 0.96)   # latar viewport 3D
+# --- Palet "Daylight" clean-pastel (selaras design-system/ds.css) -----------
+# Aksen dipakai tipis (status/kategori), bukan membanjiri layar. Bayangan
+# sangat halus + radius lebih kecil = kesan clean (bukan pastel soft-shadow).
+const COL_BG       := Color(0.961, 0.965, 0.984)  # #f5f6fb cool soft-white
+const COL_PANEL    := Color(1.0, 1.0, 1.0)        # #ffffff kartu/panel
+const COL_BORDER   := Color(0.902, 0.914, 0.953)  # #e6e9f3 hairline
+const COL_TEXT     := Color(0.165, 0.184, 0.235)  # #2a2f3c slate
+const COL_MUTED    := Color(0.424, 0.451, 0.518)  # #6c7384 teks sekunder
+const COL_ACCENT   := Color(0.435, 0.482, 0.941)  # #6f7bf0 indigo (primary)
+const COL_VIEW_BG  := Color(0.933, 0.945, 0.973)  # #eef1f8 latar viewport 3D
 
-# Aksen pastel per-seksi (badge ikon)
-const PAS_PURPLE := Color(0.62, 0.52, 0.92)
-const PAS_MINT   := Color(0.42, 0.70, 0.60)
-const PAS_SKY    := Color(0.46, 0.71, 0.94)
-const PAS_PEACH  := Color(0.98, 0.68, 0.58)
-const PAS_AMBER  := Color(0.97, 0.80, 0.46)
-const PAS_PINK   := Color(0.93, 0.58, 0.78)
+# Aksen per-seksi (badge) — versi clean/muted, tiap kategori 1 hue
+const PAS_PURPLE := Color(0.435, 0.482, 0.941)   # indigo
+const PAS_MINT   := Color(0.184, 0.722, 0.541)   # #2fb88a mint
+const PAS_SKY    := Color(0.231, 0.714, 0.769)   # #3bb6c4 teal
+const PAS_PEACH  := Color(0.937, 0.416, 0.416)   # #ef6a6a coral
+const PAS_AMBER  := Color(0.878, 0.604, 0.208)   # #e09a35 amber
+const PAS_PINK   := Color(0.608, 0.482, 0.941)   # #9b7bf0 lilac
 
 var sensor_panel: Control
 var robot: Node3D
@@ -122,18 +124,19 @@ func _apply_dark_theme() -> void:
 		font_bold.base_font = inter
 		font_bold.variation_opentype = {"wght": 600}
 
-	# Panel/kartu putih dengan border halus + soft shadow pastel
-	var panel_sb := _rounded(COL_PANEL, 14)
+	# Panel/kartu putih: border hairline + elevasi SANGAT halus (clean, bukan
+	# soft-shadow tebal). Radius 12 = lebih tegas/rapi dari 14.
+	var panel_sb := _rounded(COL_PANEL, 12)
 	panel_sb.border_width_left = 1
 	panel_sb.border_width_right = 1
 	panel_sb.border_width_top = 1
 	panel_sb.border_width_bottom = 1
 	panel_sb.border_color = COL_BORDER
-	panel_sb.shadow_color = Color(0.55, 0.50, 0.70, 0.13)
-	panel_sb.shadow_size = 7
-	panel_sb.shadow_offset = Vector2(0, 3)
+	panel_sb.shadow_color = Color(0.110, 0.129, 0.251, 0.05)
+	panel_sb.shadow_size = 3
+	panel_sb.shadow_offset = Vector2(0, 1)
 	t.set_stylebox("panel", "PanelContainer", panel_sb)
-	t.set_stylebox("panel", "Panel", _rounded(COL_PANEL, 14))
+	t.set_stylebox("panel", "Panel", _rounded(COL_PANEL, 12))
 
 	t.set_color("font_color", "Label", COL_TEXT)
 
@@ -142,16 +145,16 @@ func _apply_dark_theme() -> void:
 	t.set_stylebox("fill", "ProgressBar", _rounded(COL_ACCENT, 4))
 	t.set_color("font_color", "ProgressBar", COL_TEXT)
 
-	# Tombol (pill pastel)
-	var btn_n := _rounded(Color(0.97, 0.96, 0.99), 9)
+	# Tombol clean: putih + border tipis; hover = tint indigo; pressed lebih dalam
+	var btn_n := _rounded(COL_PANEL, 9)
 	btn_n.border_width_bottom = 1; btn_n.border_width_top = 1
 	btn_n.border_width_left = 1; btn_n.border_width_right = 1
-	btn_n.border_color = COL_BORDER
-	var btn_h := _rounded(Color(0.93, 0.91, 0.99), 9)
+	btn_n.border_color = Color(0.839, 0.859, 0.922)    # #d6dbeb line-2
+	var btn_h := _rounded(Color(0.933, 0.941, 1.0), 9) # #eef0ff indigo-bg
 	btn_h.border_width_bottom = 1; btn_h.border_width_top = 1
 	btn_h.border_width_left = 1; btn_h.border_width_right = 1
 	btn_h.border_color = COL_ACCENT
-	var btn_p := _rounded(Color(0.88, 0.84, 0.98), 9)
+	var btn_p := _rounded(Color(0.886, 0.898, 0.992), 9)
 	t.set_stylebox("normal", "Button", btn_n)
 	t.set_stylebox("hover", "Button", btn_h)
 	t.set_stylebox("pressed", "Button", btn_p)
