@@ -512,8 +512,8 @@ func _build_imu_popup() -> void:
 	vb.add_child(imu_enable_chk)
 
 	var settle_chk := CheckBox.new()
-	settle_chk.text = "Auto-settle kontak (eksperimen — ratakan tumpuan)"
-	settle_chk.button_pressed = false
+	settle_chk.text = "Auto-settle kaki (ratakan tumpuan ke lantai)"
+	settle_chk.button_pressed = true
 	settle_chk.add_theme_color_override("font_color", COL_TEXT)
 	settle_chk.toggled.connect(_on_auto_settle)
 	vb.add_child(settle_chk)
