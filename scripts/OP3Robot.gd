@@ -401,11 +401,13 @@ func get_imu_euler_deg() -> Vector3:
 func _update_base() -> void:
 	if model_root == null:
 		return
+	# Orientasi badan = IMU (bila aktif) * offset manual. Offset manual SELALU
+	# berlaku (juga offline / saat nyambung servo) → badan bisa diputar bebas,
+	# mis. di-pitch ~90° untuk pose push-up (lalu grounding menapakkannya).
+	var q := Quaternion.IDENTITY
 	if _imu_enabled:
-		var q_eff := _imu_ref.inverse() * _imu_q       # relatif referensi tegak
-		model_root.transform.basis = ROS_TO_GODOT * (Basis(q_eff) * _imu_manual)
-	else:
-		model_root.transform.basis = ROS_TO_GODOT
+		q = _imu_ref.inverse() * _imu_q
+	model_root.transform.basis = ROS_TO_GODOT * (Basis(q) * _imu_manual)
 	_ground_to_floor()
 
 
