@@ -286,7 +286,7 @@ func _build() -> void:
 	# Order follows the digital-twin flow: MONITOR the physical asset
 	# (vision, compute, power, sensors, joints, trend) -> CONTROL/author.
 	col.add_child(_section_label("MONITORING — physical asset"))
-	col.add_child(_build_stat_strip())
+	# stat-strip dihapus (anti-dobel): baterai/suhu/joint kini di gauge kolom kanan
 	col.add_child(_build_vision_section())             # head camera + YOLO
 	col.add_child(_build_system_section())
 	col.add_child(_build_battery_section())

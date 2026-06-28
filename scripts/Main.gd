@@ -214,31 +214,54 @@ func _build_layout() -> void:
 	var toolbar := _build_toolbar()
 	add_child(toolbar)
 
-	# Strip ALUR (Connect → Activate → Ready → Action Editor)
-	var flow := _build_flow_strip()
-	add_child(flow)
-
 	# Split container utama
 	var split := HSplitContainer.new()
 	split.anchor_top = 0.0
 	split.anchor_left = 0.0
 	split.anchor_right = 1.0
 	split.anchor_bottom = 1.0
-	split.offset_top = 98  # ruang untuk toolbar (56) + strip alur
+	split.offset_top = 56  # ruang untuk toolbar
 	split.offset_left = 8
 	split.offset_right = -8
 	split.offset_bottom = -8
-	split.split_offset = 420  # lebar panel kiri (sensor)
+	split.split_offset = 470  # lebar nav-rail + panel kiri
 	add_child(split)
 
-	# === KIRI: Sensor Panel ===
-	var left_wrapper := PanelContainer.new()
-	left_wrapper.custom_minimum_size = Vector2(380, 0)
-	split.add_child(left_wrapper)
+	# === KIRI: nav-rail minimalis + halaman konten (Overview/Action/Logs) ===
+	var left_host := HBoxContainer.new()
+	left_host.add_theme_constant_override("separation", 8)
+	left_host.custom_minimum_size = Vector2(470, 0)
+	split.add_child(left_host)
 
+	left_host.add_child(_build_nav_rail())
+
+	nav_content = Control.new()
+	nav_content.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	nav_content.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	left_host.add_child(nav_content)
+
+	# Halaman: Overview (SensorPanel)
+	var sp_wrap := PanelContainer.new()
+	sp_wrap.set_anchors_preset(Control.PRESET_FULL_RECT)
+	nav_content.add_child(sp_wrap)
 	sensor_panel = Control.new()
 	sensor_panel.set_script(SensorPanelScript)
-	left_wrapper.add_child(sensor_panel)
+	sp_wrap.add_child(sensor_panel)
+	nav_pages["monitor"] = sp_wrap
+
+	# Halaman: Action Editor
+	var ae_wrap := _build_action_editor()
+	ae_wrap.set_anchors_preset(Control.PRESET_FULL_RECT)
+	nav_content.add_child(ae_wrap)
+	nav_pages["action"] = ae_wrap
+
+	# Halaman: Logs
+	var log_wrap := _build_logs_page()
+	log_wrap.set_anchors_preset(Control.PRESET_FULL_RECT)
+	nav_content.add_child(log_wrap)
+	nav_pages["logs"] = log_wrap
+
+	_nav_select("monitor")
 
 	# === KANAN: 3D Viewport + kolom info (gauges · inspector · joints) ===
 	var right_area := HBoxContainer.new()
@@ -467,7 +490,7 @@ func _build_imu_popup() -> void:
 	imu_popup.add_child(vb)
 
 	var title := Label.new()
-	title.text = "Kalibrasi IMU"
+	title.text = "IMU & Orientasi Badan"
 	title.add_theme_font_size_override("font_size", 16)
 	title.add_theme_color_override("font_color", COL_TEXT)
 	if font_bold:
@@ -475,7 +498,7 @@ func _build_imu_popup() -> void:
 	vb.add_child(title)
 
 	var note := Label.new()
-	note.text = "Letak/orientasi mount IMU di dada tak pasti → cocokkan manual. 'Zero now' menganggap pose robot saat ini sebagai tegak."
+	note.text = "Slider memutar BADAN robot (roll/pitch/yaw) — berlaku juga offline / saat nyambung. Pitch ~±90° untuk membaringkan ke pose push-up. 'Zero now' jadikan orientasi IMU sekarang sebagai tegak."
 	note.add_theme_color_override("font_color", COL_MUTED)
 	note.add_theme_font_size_override("font_size", 11)
 	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
@@ -513,9 +536,9 @@ func _imu_slider_row(ax: String) -> Control:
 	imu_val_lbls[ax] = val
 	row.add_child(hb)
 	var s := HSlider.new()
-	s.min_value = -30.0
-	s.max_value = 30.0
-	s.step = 0.5
+	s.min_value = -180.0
+	s.max_value = 180.0
+	s.step = 1.0
 	s.value = 0.0
 	s.custom_minimum_size = Vector2(0, 18)
 	s.value_changed.connect(_on_imu_slider)
@@ -698,6 +721,7 @@ func _act_sequence() -> void:
 
 
 func _on_robot_status(level: int, module_name: String, text: String) -> void:
+	_log("[%s] %s" % [module_name, text])
 	if activate_status_lbl == null:
 		return
 	var c := COL_MUTED
@@ -872,11 +896,6 @@ func _build_info_column() -> Control:
 	arow.add_child(cal)
 	vb.add_child(arow)
 
-	vb.add_child(_hsep())
-	vb.add_child(_info_section("JOINTS"))
-	joints_list_box = VBoxContainer.new()
-	joints_list_box.add_theme_constant_override("separation", 3)
-	vb.add_child(joints_list_box)
 	return wrap
 
 
@@ -983,9 +1002,313 @@ func _update_info_column() -> void:
 			insp_lbls["id"].text = "ID %02d · %s" % [robot.get_servo_id(sel), robot.get_servo_part(sel)]
 		insp_lbls["pos"].text = "%+.1f°" % rad_to_deg(robot.get_joint_angle(sel))
 		insp_lbls["goal"].text = "%+.1f°" % robot.get_default_angle_deg(sel)
-	_ensure_joint_rows()
-	for jn in joints_rows:
-		joints_rows[jn]["val"].text = "%+.0f°" % rad_to_deg(robot.get_joint_angle(jn))
+
+
+# ----------------------------------------------------------------------------
+# NAV-RAIL (kiri) — minimalis: ikon + label, item aktif = pill indigo halus.
+# Pindah halaman konten: Overview (monitor) / Action (editor) / Logs.
+# ----------------------------------------------------------------------------
+var nav_content: Control
+var nav_pages := {}
+var nav_buttons := {}
+const NAV_ITEMS := [["monitor", "Overview", "⌂"], ["action", "Action", "✎"], ["logs", "Logs", "≣"]]
+
+func _build_nav_rail() -> Control:
+	var rail := PanelContainer.new()
+	rail.custom_minimum_size = Vector2(84, 0)
+	var mc := MarginContainer.new()
+	mc.add_theme_constant_override("margin_left", 8)
+	mc.add_theme_constant_override("margin_right", 8)
+	mc.add_theme_constant_override("margin_top", 12)
+	mc.add_theme_constant_override("margin_bottom", 12)
+	rail.add_child(mc)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 6)
+	mc.add_child(vb)
+	var logo := Panel.new()
+	logo.custom_minimum_size = Vector2(44, 44)
+	logo.add_theme_stylebox_override("panel", _rounded(COL_ACCENT, 22))
+	var lw := CenterContainer.new()
+	lw.add_child(logo)
+	vb.add_child(lw)
+	var sp := Control.new()
+	sp.custom_minimum_size = Vector2(0, 10)
+	vb.add_child(sp)
+	for item in NAV_ITEMS:
+		vb.add_child(_nav_item(item[0], item[1], item[2]))
+	return rail
+
+
+func _nav_item(key: String, label: String, icon: String) -> Control:
+	var b := Button.new()
+	b.focus_mode = Control.FOCUS_NONE
+	b.custom_minimum_size = Vector2(0, 60)
+	b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	b.pressed.connect(_nav_select.bind(key))
+	var box := VBoxContainer.new()
+	box.set_anchors_preset(Control.PRESET_FULL_RECT)
+	box.alignment = BoxContainer.ALIGNMENT_CENTER
+	box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	var ic := Label.new()
+	ic.text = icon
+	ic.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	ic.add_theme_font_size_override("font_size", 20)
+	var lb := Label.new()
+	lb.text = label
+	lb.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	lb.add_theme_font_size_override("font_size", 10)
+	box.add_child(ic)
+	box.add_child(lb)
+	b.add_child(box)
+	nav_buttons[key] = {"btn": b, "ic": ic, "lb": lb}
+	return b
+
+
+func _nav_select(key: String) -> void:
+	for k in nav_pages:
+		nav_pages[k].visible = k == key
+	for k in nav_buttons:
+		var active: bool = k == key
+		var col := COL_ACCENT if active else COL_MUTED
+		var sb := _rounded(Color(0.933, 0.941, 1.0) if active else COL_PANEL, 12)
+		nav_buttons[k]["btn"].add_theme_stylebox_override("normal", sb)
+		nav_buttons[k]["btn"].add_theme_stylebox_override("hover", _rounded(Color(0.965, 0.969, 0.992), 12))
+		nav_buttons[k]["btn"].add_theme_stylebox_override("pressed", sb)
+		nav_buttons[k]["ic"].add_theme_color_override("font_color", col)
+		nav_buttons[k]["lb"].add_theme_color_override("font_color", col)
+
+
+# ----------------------------------------------------------------------------
+# ACTION EDITOR — Page → Steps(scene) + 3 mode atur pose + preview.
+# ----------------------------------------------------------------------------
+var ae_steps := []
+var _ae_sel := -1
+var ae_steps_box: VBoxContainer
+var ae_mode_opt: OptionButton
+var ae_mode_hint: Label
+var ae_name_edit: LineEdit
+
+func _build_action_editor() -> Control:
+	var panel := PanelContainer.new()
+	var sc := ScrollContainer.new()
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	panel.add_child(sc)
+	var mc := MarginContainer.new()
+	mc.add_theme_constant_override("margin_left", 14)
+	mc.add_theme_constant_override("margin_right", 14)
+	mc.add_theme_constant_override("margin_top", 14)
+	mc.add_theme_constant_override("margin_bottom", 14)
+	mc.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	sc.add_child(mc)
+	var vb := VBoxContainer.new()
+	vb.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	vb.add_theme_constant_override("separation", 10)
+	mc.add_child(vb)
+
+	var ttl := Label.new()
+	ttl.text = "Action Editor"
+	ttl.add_theme_font_size_override("font_size", 15)
+	if font_bold:
+		ttl.add_theme_font_override("font", font_bold)
+	ttl.add_theme_color_override("font_color", COL_TEXT)
+	vb.add_child(ttl)
+
+	vb.add_child(_info_section("MODE ATUR POSE"))
+	ae_mode_opt = OptionButton.new()
+	ae_mode_opt.add_item("(a) Virtual — atur di DT")
+	ae_mode_opt.add_item("(b) Hand-pose — lemaskan servo")
+	ae_mode_opt.add_item("(c) Live-sync — DT & robot bareng")
+	ae_mode_opt.item_selected.connect(_ae_mode_changed)
+	vb.add_child(ae_mode_opt)
+	ae_mode_hint = Label.new()
+	ae_mode_hint.add_theme_color_override("font_color", COL_MUTED)
+	ae_mode_hint.add_theme_font_size_override("font_size", 10)
+	ae_mode_hint.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	vb.add_child(ae_mode_hint)
+
+	vb.add_child(_info_section("PAGE"))
+	ae_name_edit = LineEdit.new()
+	ae_name_edit.text = "motion_baru"
+	vb.add_child(ae_name_edit)
+
+	vb.add_child(_info_section("STEPS / SCENE"))
+	ae_steps_box = VBoxContainer.new()
+	ae_steps_box.add_theme_constant_override("separation", 3)
+	vb.add_child(ae_steps_box)
+
+	var r1 := HBoxContainer.new()
+	r1.add_theme_constant_override("separation", 6)
+	var cap := Button.new()
+	cap.text = "+ Capture Step"
+	cap.focus_mode = Control.FOCUS_NONE
+	cap.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	cap.pressed.connect(_ae_capture)
+	r1.add_child(cap)
+	var del := Button.new()
+	del.text = "Hapus"
+	del.focus_mode = Control.FOCUS_NONE
+	del.pressed.connect(_ae_delete)
+	r1.add_child(del)
+	vb.add_child(r1)
+
+	var r2 := HBoxContainer.new()
+	r2.add_theme_constant_override("separation", 6)
+	var play := Button.new()
+	play.text = "▶ Preview di DT"
+	play.focus_mode = Control.FOCUS_NONE
+	play.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	play.pressed.connect(_ae_play)
+	r2.add_child(play)
+	var tryb := Button.new()
+	tryb.text = "Coba di robot"
+	tryb.focus_mode = Control.FOCUS_NONE
+	tryb.tooltip_text = "Kirim pose step terpilih ke robot asli untuk verifikasi"
+	tryb.pressed.connect(_ae_try_on_robot)
+	r2.add_child(tryb)
+	vb.add_child(r2)
+
+	_ae_mode_changed(0)
+	_ae_refresh_steps()
+	return panel
+
+
+func _ae_mode_changed(idx: int) -> void:
+	if ae_mode_hint == null:
+		return
+	match idx:
+		1:
+			ae_mode_hint.text = "Pilih servo di 3D → torque-OFF → gerakkan fisik → Capture. (butuh robot konek)"
+		2:
+			ae_mode_hint.text = "Saat geser di DT, perintah dialirkan ke robot real-time. Siapkan E-Stop."
+		_:
+			ae_mode_hint.text = "Atur pose di DT (gizmo/slider), lalu Capture jadi scene. Aman — robot tak bergerak."
+
+
+func _ae_refresh_steps() -> void:
+	if ae_steps_box == null:
+		return
+	for c in ae_steps_box.get_children():
+		c.queue_free()
+	if ae_steps.is_empty():
+		var e := Label.new()
+		e.text = "(belum ada scene — tekan + Capture Step)"
+		e.add_theme_color_override("font_color", COL_MUTED)
+		e.add_theme_font_size_override("font_size", 11)
+		ae_steps_box.add_child(e)
+		return
+	for i in range(ae_steps.size()):
+		var b := Button.new()
+		b.text = "  Scene %d   ·   t = %.1fs" % [i + 1, ae_steps[i]["time"]]
+		b.focus_mode = Control.FOCUS_NONE
+		b.alignment = HORIZONTAL_ALIGNMENT_LEFT
+		b.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+		if i == _ae_sel:
+			var sb := _rounded(Color(0.933, 0.941, 1.0), 8)
+			sb.border_color = COL_ACCENT
+			sb.border_width_left = 1; sb.border_width_right = 1
+			sb.border_width_top = 1; sb.border_width_bottom = 1
+			b.add_theme_stylebox_override("normal", sb)
+		b.pressed.connect(_ae_select_step.bind(i))
+		ae_steps_box.add_child(b)
+
+
+func _ae_select_step(i: int) -> void:
+	_ae_sel = i
+	_ae_refresh_steps()
+	if robot and i >= 0 and i < ae_steps.size():
+		for jn in ae_steps[i]["pose"]:
+			robot.set_joint_angle(jn, deg_to_rad(ae_steps[i]["pose"][jn]))
+
+
+func _ae_capture() -> void:
+	if robot == null or not robot.has_method("get_joint_names"):
+		return
+	var pose := {}
+	for jn in robot.get_joint_names():
+		pose[jn] = rad_to_deg(robot.get_joint_angle(jn))
+	ae_steps.append({"pose": pose, "time": 0.5, "pause": 0.0})
+	_ae_sel = ae_steps.size() - 1
+	_ae_refresh_steps()
+	_log("Action: capture Scene %d" % ae_steps.size())
+
+
+func _ae_delete() -> void:
+	if _ae_sel >= 0 and _ae_sel < ae_steps.size():
+		ae_steps.remove_at(_ae_sel)
+		_ae_sel = -1
+		_ae_refresh_steps()
+
+
+func _ae_play() -> void:
+	if robot == null or ae_steps.is_empty() or not robot.has_method("play_motion"):
+		return
+	var steps := []
+	for s in ae_steps:
+		steps.append({"j": s["pose"], "t": s["time"], "p": s["pause"]})
+	robot.play_motion(steps, false)
+	_log("Action: preview %d scene di DT" % ae_steps.size())
+
+
+func _ae_try_on_robot() -> void:
+	if ros_bridge == null or not ros_bridge.is_open():
+		_log("Coba di robot gagal — belum konek")
+		return
+	if _ae_sel < 0 or _ae_sel >= ae_steps.size():
+		return
+	var pose_rad := {}
+	for jn in ae_steps[_ae_sel]["pose"]:
+		pose_rad[jn] = deg_to_rad(ae_steps[_ae_sel]["pose"][jn])
+	ros_bridge.publish_joints(pose_rad)
+	_log("Action: kirim Scene %d ke robot" % (_ae_sel + 1))
+
+
+# ----------------------------------------------------------------------------
+# LOGS — event log sederhana (prepend, maks 60 baris).
+# ----------------------------------------------------------------------------
+var _log_box: VBoxContainer
+
+func _build_logs_page() -> Control:
+	var panel := PanelContainer.new()
+	var mc := MarginContainer.new()
+	mc.add_theme_constant_override("margin_left", 14)
+	mc.add_theme_constant_override("margin_right", 14)
+	mc.add_theme_constant_override("margin_top", 14)
+	mc.add_theme_constant_override("margin_bottom", 14)
+	panel.add_child(mc)
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 8)
+	mc.add_child(vb)
+	var ttl := Label.new()
+	ttl.text = "Event Log"
+	ttl.add_theme_font_size_override("font_size", 15)
+	if font_bold:
+		ttl.add_theme_font_override("font", font_bold)
+	ttl.add_theme_color_override("font_color", COL_TEXT)
+	vb.add_child(ttl)
+	var sc := ScrollContainer.new()
+	sc.size_flags_vertical = Control.SIZE_EXPAND_FILL
+	sc.horizontal_scroll_mode = ScrollContainer.SCROLL_MODE_DISABLED
+	vb.add_child(sc)
+	_log_box = VBoxContainer.new()
+	_log_box.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	_log_box.add_theme_constant_override("separation", 3)
+	sc.add_child(_log_box)
+	_log("Aplikasi siap — mode offline")
+	return panel
+
+
+func _log(text: String) -> void:
+	if _log_box == null:
+		return
+	var l := Label.new()
+	l.text = "%s   %s" % [Time.get_time_string_from_system(), text]
+	l.add_theme_font_size_override("font_size", 11)
+	l.add_theme_color_override("font_color", COL_MUTED)
+	l.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	_log_box.add_child(l)
+	_log_box.move_child(l, 0)
+	while _log_box.get_child_count() > 60:
+		_log_box.get_child(_log_box.get_child_count() - 1).queue_free()
 
 
 # ----------------------------------------------------------------------------
