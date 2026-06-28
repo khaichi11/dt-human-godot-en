@@ -352,6 +352,15 @@ func _build_toolbar() -> Control:
 	imu_btn.pressed.connect(_open_imu_popup)
 	hb.add_child(imu_btn)
 
+	# Tombol aktivasi robot (torque-on → ini_pose → enable module)
+	var act_btn := Button.new()
+	act_btn.text = "Activate"
+	act_btn.focus_mode = Control.FOCUS_NONE
+	act_btn.custom_minimum_size = Vector2(82, 30)
+	act_btn.tooltip_text = "Aktifkan robot: torque-on → pose ready → pilih module"
+	act_btn.pressed.connect(_open_activate_popup)
+	hb.add_child(act_btn)
+
 	# Tombol mode (Atur / Live)
 	mode_btn = Button.new()
 	mode_btn.focus_mode = Control.FOCUS_NONE
@@ -505,6 +514,168 @@ func _on_imu_slider(_v: float) -> void:
 	imu_val_lbls["yaw"].text = "%+.1f°" % y
 	if robot and robot.has_method("set_imu_manual_offset"):
 		robot.set_imu_manual_offset(r, p, y)
+
+
+# ----------------------------------------------------------------------------
+# AKTIVASI ROBOT — urutan resmi op3_manager: torque-on → ini_pose → enable module.
+# Lihat docs/digital-twin-alur-operasi.md (state [2] → [3]).
+# ----------------------------------------------------------------------------
+var activate_popup: PopupPanel
+var activate_status_lbl: Label
+var activate_module_opt: OptionButton
+
+func _open_activate_popup() -> void:
+	if activate_popup == null:
+		_build_activate_popup()
+	activate_popup.popup_centered(Vector2i(380, 340))
+
+
+func _build_activate_popup() -> void:
+	activate_popup = PopupPanel.new()
+	var pb := _rounded(COL_PANEL, 12)
+	pb.border_color = COL_BORDER
+	pb.border_width_left = 1; pb.border_width_right = 1
+	pb.border_width_top = 1; pb.border_width_bottom = 1
+	pb.content_margin_left = 16; pb.content_margin_right = 16
+	pb.content_margin_top = 14; pb.content_margin_bottom = 14
+	activate_popup.add_theme_stylebox_override("panel", pb)
+	add_child(activate_popup)
+
+	var vb := VBoxContainer.new()
+	vb.add_theme_constant_override("separation", 8)
+	vb.custom_minimum_size = Vector2(348, 0)
+	activate_popup.add_child(vb)
+
+	var title := Label.new()
+	title.text = "Aktivasi Robot"
+	title.add_theme_font_size_override("font_size", 16)
+	title.add_theme_color_override("font_color", COL_TEXT)
+	if font_bold:
+		title.add_theme_font_override("font", font_bold)
+	vb.add_child(title)
+
+	var note := Label.new()
+	note.text = "Urutan: torque-on semua servo → ke pose ready (ini_pose) → pilih control module. Pastikan robot tertopang."
+	note.add_theme_color_override("font_color", COL_MUTED)
+	note.add_theme_font_size_override("font_size", 11)
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.custom_minimum_size = Vector2(320, 0)
+	vb.add_child(note)
+
+	var mrow := HBoxContainer.new()
+	var mlbl := Label.new()
+	mlbl.text = "Control module"
+	mlbl.add_theme_color_override("font_color", COL_MUTED)
+	mlbl.size_flags_horizontal = Control.SIZE_EXPAND_FILL
+	mrow.add_child(mlbl)
+	activate_module_opt = OptionButton.new()
+	activate_module_opt.add_item("none")
+	activate_module_opt.add_item("direct_control_module")
+	activate_module_opt.add_item("action_module")
+	activate_module_opt.add_item("walking_module")
+	activate_module_opt.select(1)   # direct_control: DT bisa atur joint
+	mrow.add_child(activate_module_opt)
+	vb.add_child(mrow)
+
+	var b1 := Button.new(); b1.text = "1 · Torque ON"; b1.focus_mode = Control.FOCUS_NONE
+	b1.pressed.connect(_act_torque_on); vb.add_child(b1)
+	var b2 := Button.new(); b2.text = "2 · Ini Pose (ready)"; b2.focus_mode = Control.FOCUS_NONE
+	b2.pressed.connect(_act_ini_pose); vb.add_child(b2)
+	var b3 := Button.new(); b3.text = "3 · Set module terpilih"; b3.focus_mode = Control.FOCUS_NONE
+	b3.pressed.connect(_act_set_module); vb.add_child(b3)
+
+	var one := Button.new()
+	one.text = "⚡ Activate (1 → 2 → 3)"
+	one.focus_mode = Control.FOCUS_NONE
+	var ob := _rounded(Color(0.933, 0.941, 1.0), 9)
+	ob.border_color = COL_ACCENT
+	ob.border_width_left = 1; ob.border_width_right = 1
+	ob.border_width_top = 1; ob.border_width_bottom = 1
+	one.add_theme_stylebox_override("normal", ob)
+	one.add_theme_color_override("font_color", COL_ACCENT)
+	one.pressed.connect(_act_sequence)
+	vb.add_child(one)
+
+	var off := Button.new()
+	off.text = "Torque OFF (semua) — lemaskan"
+	off.focus_mode = Control.FOCUS_NONE
+	off.add_theme_color_override("font_color", Color(0.937, 0.416, 0.416))
+	off.pressed.connect(_act_torque_off)
+	vb.add_child(off)
+
+	activate_status_lbl = Label.new()
+	activate_status_lbl.text = "Status: —"
+	activate_status_lbl.add_theme_color_override("font_color", COL_MUTED)
+	activate_status_lbl.add_theme_font_size_override("font_size", 11)
+	activate_status_lbl.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	activate_status_lbl.custom_minimum_size = Vector2(320, 0)
+	vb.add_child(activate_status_lbl)
+
+
+func _act_joint_names() -> Array:
+	return robot.get_joint_names() if robot and robot.has_method("get_joint_names") else []
+
+
+func _act_ready() -> bool:
+	if ros_bridge and ros_bridge.is_open():
+		return true
+	_set_act_status("Belum konek ke robot.")
+	return false
+
+
+func _set_act_status(s: String) -> void:
+	if activate_status_lbl:
+		activate_status_lbl.text = "Status: " + s
+
+
+func _act_torque_on() -> void:
+	if not _act_ready(): return
+	ros_bridge.send_torque(_act_joint_names(), true)
+	_set_act_status("Torque ON dikirim.")
+
+
+func _act_torque_off() -> void:
+	if not _act_ready(): return
+	ros_bridge.send_torque(_act_joint_names(), false)
+	_set_act_status("Torque OFF (robot lemas).")
+
+
+func _act_ini_pose() -> void:
+	if not _act_ready(): return
+	ros_bridge.send_ini_pose()
+	_set_act_status("Ke pose ready (ini_pose)…")
+
+
+func _act_set_module() -> void:
+	if not _act_ready(): return
+	var m := activate_module_opt.get_item_text(activate_module_opt.selected)
+	ros_bridge.enable_ctrl_module(m)
+	_set_act_status("Set module: %s" % m)
+
+
+func _act_sequence() -> void:
+	if not _act_ready(): return
+	ros_bridge.send_torque(_act_joint_names(), true)
+	_set_act_status("Torque ON…")
+	await get_tree().create_timer(0.5).timeout
+	ros_bridge.send_ini_pose()
+	_set_act_status("Ke pose ready (ini_pose)…")
+	await get_tree().create_timer(1.4).timeout
+	var m := activate_module_opt.get_item_text(activate_module_opt.selected)
+	ros_bridge.enable_ctrl_module(m)
+	_set_act_status("Aktif · module: %s" % m)
+
+
+func _on_robot_status(level: int, module_name: String, text: String) -> void:
+	if activate_status_lbl == null:
+		return
+	var c := COL_MUTED
+	if level >= 3:
+		c = Color(0.937, 0.416, 0.416)
+	elif level == 2:
+		c = Color(0.878, 0.604, 0.208)
+	activate_status_lbl.add_theme_color_override("font_color", c)
+	activate_status_lbl.text = "Status: [%s] %s" % [module_name, text]
 
 
 # ----------------------------------------------------------------------------
@@ -699,6 +870,7 @@ func _build_3d_scene() -> void:
 	ros_bridge.vision_received.connect(_on_ros_vision)
 	ros_bridge.camera_received.connect(_on_ros_camera)
 	ros_bridge.imu_received.connect(_on_ros_imu)
+	ros_bridge.status_received.connect(_on_robot_status)
 
 
 func _add_dir_light(rot_deg: Vector3, energy: float, color: Color, shadow := false) -> void:

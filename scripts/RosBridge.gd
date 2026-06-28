@@ -21,6 +21,7 @@ signal health_received(health: Dictionary)     # nama_joint -> "ok"|"warn"|"faul
 signal vision_received(detections: Array)      # [{label, conf, rect:Rect2 0..1}]
 signal camera_received(tex: Texture2D)         # frame kamera kepala (JPEG decode)
 signal imu_received(orientation: Quaternion, gyro: Vector3, accel: Vector3)  # /robotis/open_cr/imu
+signal status_received(level: int, module_name: String, text: String)        # /robotis/status
 
 const SUB_TOPIC := "/robotis/present_joint_states"
 const SUB_TYPE  := "sensor_msgs/msg/JointState"
@@ -38,6 +39,15 @@ const CAM_TYPE  := "sensor_msgs/msg/CompressedImage"  # field data = base64 JPEG
 # IMU OpenCR (robot-side: open_cr_module publish orientasi+gyro+accel, frame body_link)
 const IMU_TOPIC := "/robotis/open_cr/imu"
 const IMU_TYPE  := "sensor_msgs/msg/Imu"
+# --- Aktivasi robot (urutan op3_manager) -----------------------------------
+const STATUS_TOPIC := "/robotis/status"               # feedback module (StatusMsg)
+const STATUS_TYPE  := "robotis_controller_msgs/msg/StatusMsg"
+const SYNC_WRITE_TOPIC := "/robotis/sync_write_item"  # torque on/off + power
+const SYNC_WRITE_TYPE  := "robotis_controller_msgs/msg/SyncWriteItem"
+const INI_POSE_TOPIC := "/robotis/base/ini_pose"      # ke pose awal/ready
+const INI_POSE_TYPE  := "std_msgs/msg/String"
+const ENABLE_MODULE_TOPIC := "/robotis/enable_ctrl_module"  # pilih control module
+const ENABLE_MODULE_TYPE  := "std_msgs/msg/String"
 const CMD_TOPIC := "/robotis/set_joint_states"
 const CMD_TYPE  := "sensor_msgs/msg/JointState"
 const RECONNECT_SEC := 3.0
@@ -47,6 +57,7 @@ var _ws := WebSocketPeer.new()
 var _want := false
 var _subscribed := false
 var _cmd_advertised := false
+var _adv := {}                  # topic -> bool (sudah di-advertise utk publish)
 var _reconnect_t := 0.0
 var _last_state := WebSocketPeer.STATE_CLOSED
 
@@ -56,6 +67,7 @@ func start(u: String) -> void:
 	_want = true
 	_subscribed = false
 	_cmd_advertised = false
+	_adv.clear()
 	_reconnect_t = 0.0
 	emit_signal("status_changed", "connecting")
 	_ws.connect_to_url(url)
@@ -85,6 +97,7 @@ func _process(delta: float) -> void:
 				_send({"op": "subscribe", "topic": VISION_TOPIC, "type": VISION_TYPE})
 				_send({"op": "subscribe", "topic": CAM_TOPIC, "type": CAM_TYPE})
 				_send({"op": "subscribe", "topic": IMU_TOPIC, "type": IMU_TYPE})
+				_send({"op": "subscribe", "topic": STATUS_TOPIC, "type": STATUS_TYPE})
 				_subscribed = true
 				emit_signal("status_changed", "open")
 			while _ws.get_available_packet_count() > 0:
@@ -93,6 +106,8 @@ func _process(delta: float) -> void:
 			if _last_state != WebSocketPeer.STATE_CLOSED:
 				emit_signal("status_changed", "closed")
 			_subscribed = false
+			_cmd_advertised = false
+			_adv.clear()
 			# auto-reconnect selama masih diminta tersambung
 			_reconnect_t += delta
 			if _reconnect_t >= RECONNECT_SEC:
@@ -125,6 +140,9 @@ func _handle_message(text: String) -> void:
 		return
 	if topic == IMU_TOPIC:
 		_handle_imu(data.get("msg", {}))
+		return
+	if topic == STATUS_TOPIC:
+		_handle_status(data.get("msg", {}))
 		return
 	if topic != SUB_TOPIC:
 		return
@@ -206,6 +224,46 @@ func _handle_imu(msg: Dictionary) -> void:
 	var gyro := Vector3(float(g.get("x", 0.0)), float(g.get("y", 0.0)), float(g.get("z", 0.0)))
 	var accel := Vector3(float(a.get("x", 0.0)), float(a.get("y", 0.0)), float(a.get("z", 0.0)))
 	emit_signal("imu_received", q, gyro, accel)
+
+
+# Status module robot (robotis_controller_msgs/StatusMsg).
+func _handle_status(msg: Dictionary) -> void:
+	var level := int(msg.get("type", 0))           # 0 unknown, 1 info, 2 warn, 3 error
+	var module_name := String(msg.get("module_name", ""))
+	var text := String(msg.get("status_msg", ""))
+	emit_signal("status_received", level, module_name, text)
+
+
+func _advertise(topic: String, type: String) -> void:
+	if not _adv.get(topic, false):
+		_send({"op": "advertise", "topic": topic, "type": type})
+		_adv[topic] = true
+
+
+# --- Aktivasi: torque on/off, ke pose awal, pilih control module ------------
+func send_torque(joint_names: Array, on: bool) -> void:
+	if not is_open():
+		return
+	_advertise(SYNC_WRITE_TOPIC, SYNC_WRITE_TYPE)
+	var vals := []
+	for _j in joint_names:
+		vals.append(1 if on else 0)
+	_send({"op": "publish", "topic": SYNC_WRITE_TOPIC,
+		"msg": {"item_name": "torque_enable", "joint_name": joint_names, "value": vals}})
+
+
+func send_ini_pose() -> void:
+	if not is_open():
+		return
+	_advertise(INI_POSE_TOPIC, INI_POSE_TYPE)
+	_send({"op": "publish", "topic": INI_POSE_TOPIC, "msg": {"data": "ini_pose"}})
+
+
+func enable_ctrl_module(module_name: String) -> void:
+	if not is_open():
+		return
+	_advertise(ENABLE_MODULE_TOPIC, ENABLE_MODULE_TYPE)
+	_send({"op": "publish", "topic": ENABLE_MODULE_TOPIC, "msg": {"data": module_name}})
 
 
 # Kirim perintah joint ke robot (arah operator -> robot).

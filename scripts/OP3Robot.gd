@@ -486,6 +486,10 @@ func get_joint_angle(joint_name: String) -> float:
 	return joint_angles.get(joint_name, 0.0)
 
 
+func get_joint_names() -> Array:
+	return joints.keys()
+
+
 # ============================================================================
 # POSE DEFAULT / IDLE = "walk ready" resmi OP3 (ready_pose dari tune_pose.yaml).
 # Sesuai kode asli: robot diam dalam pose walk-ready, dan tiap gerakan/gestur
